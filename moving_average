@@ -1,0 +1,12 @@
+float apply_moving_average(float new_sample, float* buffer, float* current_sum, int* index)
+{
+  *current_sum -= buffer[*index];
+  buffer[*index] = new_sample;
+  *current_sum += new_sample;
+  
+  (*index)++;
+  if (*index >= CB_SIZE)
+    *index = 0;
+  
+  return (*current_sum) / CB_SIZE;
+}
