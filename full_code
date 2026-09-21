@@ -1,0 +1,3692 @@
+/* USER CODE BEGIN Header */
+/**
+******************************************************************************
+* @file           : main.c
+* @brief          : Main program body
+******************************************************************************
+* @attention
+*
+* Copyright (c) 2025 STMicroelectronics.
+* All rights reserved.
+*
+* This software is licensed under terms that can be found in the LICENSE file
+* in the root directory of this software component.
+* If no LICENSE file comes with this software, it is provided AS-IS.
+*
+******************************************************************************
+*/
+/* USER CODE END Header */
+/* Includes ------------------------------------------------------------------*/
+#include "main.h"
+
+/* Private includes ----------------------------------------------------------*/
+/* USER CODE BEGIN Includes */
+#include <math.h>
+#include <string.h>
+/* USER CODE END Includes */
+
+/* Private typedef -----------------------------------------------------------*/
+/* USER CODE BEGIN PTD */
+
+/* USER CODE END PTD */
+
+/* Private define ------------------------------------------------------------*/
+/* USER CODE BEGIN PD */
+#define CB_SIZE 30
+#define pi 3.14159265358979323846
+#define G 9.80665f
+
+#define GYRO_BUFFER_SIZE 22
+#define DEG2RAD 0.017453292519943295f
+
+#define ACC_DEAD_CNT_TH  40
+#define ACC_DEAD_THR   0.05f
+#define ACC_MA_SIZE  10
+
+
+// 0.025s 주기 기준 (cnt%500에서 호출하니까 25ms)
+#define TRAJ_DT        0.05f
+#define CORNER_HOLD_S  1.00f   // 꼭짓점에서 멈출 시간 (튜닝)
+#define CORNER_HOLD_N  ((int)(CORNER_HOLD_S / TRAJ_DT + 0.5f))
+
+#define LIDAR_FRAME_LEN  9
+#define LIDAR_HDR0       0x59
+#define LIDAR_HDR1       0x59
+
+#define JETSON_RX_BUF_SIZE 64
+
+
+/* USER CODE END PD */
+
+/* Private macro -------------------------------------------------------------*/
+/* USER CODE BEGIN PM */
+
+/* USER CODE END PM */
+
+/* Private variables ---------------------------------------------------------*/
+ADC_HandleTypeDef hadc1;
+DMA_HandleTypeDef hdma_adc1;
+
+TIM_HandleTypeDef htim1;
+TIM_HandleTypeDef htim2;
+TIM_HandleTypeDef htim3;
+TIM_HandleTypeDef htim5;
+TIM_HandleTypeDef htim8;
+
+UART_HandleTypeDef huart4;
+UART_HandleTypeDef huart5;
+UART_HandleTypeDef huart1;
+UART_HandleTypeDef huart2;
+UART_HandleTypeDef huart3;
+DMA_HandleTypeDef hdma_uart4_rx;
+DMA_HandleTypeDef hdma_uart4_tx;
+DMA_HandleTypeDef hdma_uart5_rx;
+DMA_HandleTypeDef hdma_uart5_tx;
+DMA_HandleTypeDef hdma_usart1_rx;
+DMA_HandleTypeDef hdma_usart1_tx;
+DMA_HandleTypeDef hdma_usart3_rx;
+DMA_HandleTypeDef hdma_usart3_tx;
+
+/* USER CODE BEGIN PV */
+int cnt;
+int button;
+int Brk = 1;
+
+
+//Motor
+uint16_t Motor_CCR1;
+uint16_t Motor_CCR2;
+uint16_t Motor_CCR3;
+uint16_t Motor_CCR4;
+
+//Current control
+uint16_t ADC_buffer[4];
+volatile float Volt1;
+volatile float Volt2;
+volatile float Volt3;
+volatile float Volt4;
+volatile float Current1;
+volatile float Current2;
+volatile float Current3;
+volatile float Current4;
+volatile float Current_Offset1 = 0.15;
+volatile float Current_Offset2 = 0.25;
+volatile float Current_Offset3 = -6.5;
+volatile float Current_Offset4 = 0.0;
+volatile float Current_lpf1;
+volatile float Current_lpf2;
+volatile float Current_lpf3;
+volatile float Current_lpf4;
+volatile float pre_Current_lpf1;
+volatile float pre_Current_lpf2;
+volatile float pre_Current_lpf3;
+volatile float pre_Current_lpf4;
+volatile float Current_ma1;
+volatile float Current_ma2;
+volatile float Current_ma3;
+volatile float Current_ma4;
+float Current_Scale = 10.0;
+float dt_current = 0.001;
+float Tau_current = 0.01;
+
+volatile float Current_Error1;
+volatile float Current_Error2;
+volatile float Current_Error3;
+volatile float Current_Error4;
+volatile float Current_Error_Sum1;
+volatile float Current_Error_Sum2;
+volatile float Current_Error_Sum3;
+volatile float Current_Error_Sum4;
+volatile float Current_Control1;
+volatile float Current_Control2;
+volatile float Current_Control3;
+volatile float Current_Control4;
+float Current_limit = 4199.0;
+
+float Current_Kp = 5000.0;
+float Current_Ki = 60000.0;
+
+float dir1;
+float dir2;
+float dir3;
+float dir4;
+
+//moving_average
+float current_buffer1[30] = {0};
+int buffer_index1 = 0;
+float current_sum1 = 0;
+
+float current_buffer2[30] = {0};
+int buffer_index2 = 0;
+float current_sum2 = 0;
+
+float current_buffer3[30] = {0};
+int buffer_index3 = 0;
+float current_sum3 = 0;
+
+float current_buffer4[30] = {0};
+int buffer_index4 = 0;
+float current_sum4 = 0;
+
+//Velocity control
+volatile float Vel_Cur1;
+volatile float Vel_Cur2;
+volatile float Vel_Cur3;
+volatile float Vel_Cur4;
+volatile float Vel_omega1;
+volatile float Vel_omega2;
+volatile float Vel_omega3;
+volatile float Vel_omega4;
+volatile float pre_Vel_Cur1;
+volatile float pre_Vel_Cur2;
+volatile float pre_Vel_Cur3;
+volatile float pre_Vel_Cur4;
+volatile float Vel_Error1;
+volatile float Vel_Error2;
+volatile float Vel_Error3;
+volatile float Vel_Error4;
+volatile float Vel_Error_Sum1;
+volatile float Vel_Error_Sum2;
+volatile float Vel_Error_Sum3;
+volatile float Vel_Error_Sum4;
+volatile float Vel_Control1;
+volatile float Vel_Control2;
+volatile float Vel_Control3;
+volatile float Vel_Control4;
+volatile float pre_Vel_Control1;
+volatile float pre_Vel_Control2;
+volatile float pre_Vel_Control3;
+volatile float pre_Vel_Control4;
+
+float Vel_Kp = 0.001;
+float Vel_Ki = 0.01;
+
+float target_vel = 0.0;
+float pre_target_vel = 0.0;
+float Vel_limit = 4199.0;
+
+//DOB
+float Ts = 0.01;
+float tau_DOB = 0.01;
+float J = 2.4e-6f;
+float B = 1e-5f;
+volatile float kt = 0.039;
+
+volatile float Vel_dot1;
+volatile float Vel_dot2;
+volatile float Vel_dot3;
+volatile float Vel_dot4;
+volatile float u_tilda1;
+volatile float u_tilda2;
+volatile float u_tilda3;
+volatile float u_tilda4;
+volatile float d_hat1;
+volatile float d_hat2;
+volatile float d_hat3;
+volatile float d_hat4;
+volatile float pre_d_hat1;
+volatile float pre_d_hat2;
+volatile float pre_d_hat3;
+volatile float pre_d_hat4;
+volatile float DOB_Error1;
+volatile float DOB_Error2;
+volatile float DOB_Error3;
+volatile float DOB_Error4;
+volatile float alpha;
+
+//Encoder
+int Encoder1;
+int Encoder2;
+int Encoder3;
+int Encoder4;
+int pre_Encoder1;
+int pre_Encoder2;
+int pre_Encoder3;
+int pre_Encoder4;
+int Linear_cnt1;
+int Linear_cnt2;
+int Linear_cnt3;
+int Linear_cnt4;
+volatile float Linear_Encoder_cnt1;
+volatile float Linear_Encoder_cnt2;
+volatile float Linear_Encoder_cnt3;
+volatile float Linear_Encoder_cnt4;
+volatile float pre_Linear_Encoder_cnt1;
+volatile float pre_Linear_Encoder_cnt2;
+volatile float pre_Linear_Encoder_cnt3;
+volatile float pre_Linear_Encoder_cnt4;
+volatile float accel1;
+volatile float accel2;
+volatile float accel3;
+volatile float accel4;
+
+//IMU
+uint8_t gyro_buffer[GYRO_BUFFER_SIZE];
+uint8_t gyro_bufferCpy[GYRO_BUFFER_SIZE];
+int16_t Euler_Roll, Euler_Pitch, Euler_Yaw;
+int16_t Euler_Roll_V, Euler_Pitch_V, Euler_Yaw_V;
+int16_t Euler_X_aixs, Euler_Y_aixs, Euler_Z_aixs;
+int16_t Euler_X_aixs_A, Euler_Y_aixs_A, Euler_Z_aixs_A;
+volatile float roll, pitch, yaw;
+volatile float roll_V, pitch_V, yaw_V;
+volatile float X_aixs, Y_aixs, Z_aixs;
+volatile float X_aixs_A, Y_aixs_A, Z_aixs_A;
+volatile float yaw_offset = 0.0f;
+volatile float yaw_raw_deg = 0.0f;
+static uint8_t yaw_offset_set = 0;
+
+//angle and angle velocity
+float yaw_ref = 0.0f;
+
+float yaw_kp = 3.5; //pd 0.15
+float yaw_kd = 0.3; //pd 0.01
+float yaw_ki = 0.0; //i gain i don`t know steady-state Error very very serious
+
+volatile float yaw_error;
+volatile float yaw_control;
+volatile float yaw_error_sum;
+
+volatile float yaw_V_error;
+volatile float yaw_V_error_sum;
+volatile float yaw_A;
+volatile float yaw_V_control;
+
+float yaw_V_limit = 4199;
+float yaw_V_pre;
+
+float yaw_V_kp = 0.11; 
+float yaw_V_kd = 0.0; 
+float yaw_V_ki = 0.001;  
+
+//1D Lider
+int16_t Dist_x;
+int16_t strength_x;
+int16_t Temp_x;
+int8_t check_x;
+
+int16_t Dist_y;
+int16_t strength_y;
+int16_t Temp_y;
+int8_t check_y;
+
+volatile float Lider_y_axis;
+volatile float Lider_x_axis;
+
+
+static uint8_t Lider_rx_data_x[LIDAR_FRAME_LEN];
+static uint8_t Lider_rx_data_y[LIDAR_FRAME_LEN];
+
+static uint8_t Lider_rx_data_xCpy[LIDAR_FRAME_LEN];
+static uint8_t Lider_rx_data_yCpy[LIDAR_FRAME_LEN];
+
+static uint16_t Dist_x_prev = 0;
+static uint16_t Dist_y_prev = 0;
+static uint8_t  dist_init = 0;
+
+//Dynamics
+float a = 0.115f;
+float b = 0.190f;
+float r = 0.05f;
+
+volatile float Omega1, Omega2, Omega3, Omega4;
+volatile float target1, target2, target3, target4;
+volatile float pre_target1, pre_target2, pre_target3, pre_target4;
+
+volatile float Vx_enc =0;
+volatile float Vy_enc =0;
+volatile float Ww_enc =0;
+volatile float Sx = 0; volatile float Sy = 0;    //circle
+//volatile float Sx = 2.2; volatile float Sy = 0;   //squre
+volatile float Vx_traj_b = 0;
+volatile float Vy_traj_b = 0;
+volatile float W_b = 0;
+volatile float theta_traj;
+volatile float Vx_target = 0;
+volatile float Vy_target = 0;
+volatile float Sx_ref = 0;
+volatile float Sy_ref = 0;
+float vx_world = 0.0f;
+float vy_world = 0.0f;
+
+//Acc_MA_Update_x
+uint8_t acc_wX_ma_idx = 0;
+float acc_wX_ma_sum = 0.0f;
+float acc_wX_ma_buf[ACC_MA_SIZE] = {0};
+
+//Acc_MA_Update_y
+uint8_t acc_wY_ma_idx = 0;
+float acc_wY_ma_sum = 0.0f;
+float acc_wY_ma_buf[ACC_MA_SIZE] = {0};
+
+//Acc_LPF_Update_X
+volatile float acc_wX_lpf_prev = 0.0f;
+float dt_lpf = 0.025;
+float Tau_lpf = 0.05;
+//Acc_LPF_Update_Y
+volatile float acc_wY_lpf_prev = 0.0f;
+
+//LPF
+volatile float acc_wX, acc_wY, acc_wZ;
+float acc_wX_ma;
+volatile float acc_wX_lpf = 0.0f;
+float acc_wY_ma;
+volatile float acc_wY_lpf = 0.0f;
+volatile float acc_X;
+volatile float acc_Y;
+volatile float acc_Z;
+
+// SlipCF_Update
+float tau_cf = 0.125;
+float dt_cf = 0.025;
+float pre_vel_x = 0;
+volatile float vel_x;
+float pre_vel_y = 0;
+volatile float vel_y;
+
+volatile float vel_x_cf = 0.0f;
+volatile float vel_y_cf = 0.0f;
+
+volatile float lambda_x = 1.0f;
+volatile float lambda_y = 1.0f;
+
+static float vimu_x = 0.0f;
+static float vimu_y = 0.0f;
+
+static const float dt_slip = 0.025f;     // 25ms
+volatile float tau_cf_base_y = 0.05f;
+volatile float tau_cf_base_x = 0.05f;
+
+//volatile float LAM_MIN_X = 1.02;
+//volatile float LAM_MIN_Y = 1.02;
+
+volatile float LAM_MIN_X = 1.0;
+volatile float LAM_MIN_Y = 1.0;
+volatile float LAM_MAX_X = 1.15f;
+volatile float LAM_MAX_Y = 1.15f;
+volatile float VENC_MIN = 0.02f;
+static const float AIMU_MIN = 0.1f;
+
+//Velocity_Update_Deadzone
+static uint16_t acc_dead_cnt_x = 0;
+static uint16_t acc_dead_cnt_y = 0;
+
+//position_function
+float v_traj = 5.0;                            //velocity
+uint8_t was_stationary_x = 0;
+volatile float pos_x;
+volatile float pos_x_hold;
+uint8_t was_stationary_y = 0;
+volatile float pos_y;
+volatile float pos_y_hold;
+float dt_pos = 0.05;
+
+//Mecanum_wheel_body_DOB
+volatile float Vx_b;
+volatile float Vy_b;
+volatile float d_hat_x;
+volatile float d_hat_y;
+volatile float pre_Vx_b;
+volatile float pre_Vy_b;
+float wn_x = 5.8f;
+float zn_x = 0.6f;
+float wn_y = 5.484731f;
+float zn_y = 0.362957f;
+
+float fc_x = 2.0f;
+float wc_x = 0.0f;
+float zc_x = 0.70f;
+float fc_y = 1.5f;
+float wc_y = 0.0f;
+float zc_y = 0.70f;
+
+float T_DOB = 0.05f;
+
+float Vx_b_veiw;
+float Vy_b_veiw;
+float d_hat_x_veiw;
+float d_hat_y_veiw;
+
+float v;
+
+float kdob = 1.0f;
+
+//lamped disturbance
+float dis_x_exp = 0;
+float dis_x_for = 0;
+float dis_y_exp = 0;
+float dis_y_for = 0;
+float dis_mu_x = 0.03f;
+float dis_mu_y = 0.034f;
+float dis_m = 9.07f;
+float dis_g = 9.81f;
+float dis_c_x = 1.57f;
+float dis_c_y = 1.28f;
+float dis_Ts = 0.025f;
+float dis_K = 9.5256;
+float dis_x_alpha;
+float dis_y_alpha;
+float resist_x;
+float resist_y;
+float vel_ref_x;
+float vel_ref_y;
+
+float Current_sum_x;
+float Current_sum_y;
+float Current_raw_sum_x;
+float Current_raw_sum_y;
+float pre_vel_x_cf;
+float pre_vel_y_cf;
+float vel_x_cf_dot;
+float vel_y_cf_dot;
+float vel_x_model;
+float vel_y_model;
+
+float dis_F1;
+float dis_F2;
+float dis_F3;
+float dis_F4;
+
+float F_net;
+
+float sgnx;
+float sgny;
+
+float r_y;
+float body_vel_ref;
+static float s_ref = 0.0f;
+
+//jetson
+float Timestamp = 0.0f;
+
+#pragma pack(push, 1) // 1바이트 단위로 패딩 없이 정렬
+typedef struct {
+  uint8_t header;       // 0xAA (1바이트)
+  float pos_x;          // (4바이트)
+  float pos_y;          // (4바이트)
+  float Sx_ref;         // (4바이트)
+  float Sy_ref;         // (4바이트)
+  float yaw;            // (4바이트)
+  float yaw_ref;        // (4바이트)
+  float Vx_target;      // (4바이트)
+  float Vy_target;      // (4바이트)
+  float timestamp;      // (4바이트)
+  uint8_t checksum;     // 검증용 체크섬 (1바이트)
+} JetsonTxPacket;
+#pragma pack(pop)
+
+JetsonTxPacket jetsonPacket;
+
+#pragma pack(push, 1)
+typedef struct {
+  uint8_t start_byte;     // 0xFD
+  float corrected_x;      
+  float corrected_y;      
+  float camera_x;
+  float camera_y;
+  uint8_t checksum;       
+  uint8_t end_byte;       // 0xFE
+} JetsonPacket;
+#pragma pack(pop)
+
+extern UART_HandleTypeDef huart5; // UART5 사용
+
+JetsonPacket logic_packet;        // 메인/타이머 루프에서 사용할 최종 데이터
+uint8_t dma_rx_buffer[19];        // 딱 맞춘 11바이트 버퍼
+uint8_t rx_ready_flag = 0;        // 데이터 수신 완료 플래그
+
+
+float Manipulator_Target_X;
+float Manipulator_Target_Y;
+float Manipulator_Camera_X;
+float Manipulator_Camera_Y;
+
+HAL_StatusTypeDef rx_status;
+
+uint8_t jetson_rx_buffer[JETSON_RX_BUF_SIZE];
+uint8_t jetson_rx_bufferCpy[JETSON_RX_BUF_SIZE];
+
+//reset
+volatile int Reset_Flag = 1; 
+volatile int pre_Reset_Flag = 1;
+
+/* USER CODE END PV */
+
+/* Private function prototypes -----------------------------------------------*/
+void SystemClock_Config(void);
+static void MX_GPIO_Init(void);
+static void MX_DMA_Init(void);
+static void MX_USART2_UART_Init(void);
+static void MX_ADC1_Init(void);
+static void MX_TIM3_Init(void);
+static void MX_TIM1_Init(void);
+static void MX_TIM2_Init(void);
+static void MX_TIM5_Init(void);
+static void MX_TIM8_Init(void);
+static void MX_UART4_Init(void);
+static void MX_UART5_Init(void);
+static void MX_USART1_UART_Init(void);
+static void MX_USART3_UART_Init(void);
+/* USER CODE BEGIN PFP */
+float apply_moving_average(float new_sample, float* buffer, float* current_sum, int* index);
+void Current_LPF_function();
+void Current_control_function();
+void Velocity_control_function();
+void Encoder_function();
+void EBIMU9_DOFV5_function();
+void LIDER_function();
+void angle_function();
+void Mecanum_wheel_Dynamics_add_DOB();
+void X_Y_aixs();
+void Brk_reset();
+void Trajectory_squre_function();
+void Trajectory_triangle_function();
+void Trajectory_eight_circle_function();
+void Trajectory_parallelogram_function();
+void Trajectory_zigzag_function();
+void Trajectory_star_function();
+void Trajectory_maca_square_function();
+void LIDER_function();
+void LPF();
+void Velocity_ZUPT_Update(void);
+void Velocity_Update_Deadzone(void);
+void SlipCF_Update(void);
+void position_function();
+void Mecanum_wheel_body_DOB();
+void Mecanum_wheel_Dynamics_non_DOB();
+void lumped_disturbance();
+void jetson_orin_tx();
+void jetson_orin_rx();
+/* USER CODE END PFP */
+
+/* Private user code ---------------------------------------------------------*/
+/* USER CODE BEGIN 0 */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  if(htim == &htim3)
+  {
+    // ====== Reset_Flag가 1에서 0으로 떨어지는 순간 시스템 하드웨어 리셋 ======
+    if (pre_Reset_Flag == 1 && Reset_Flag == 0)
+    {
+      // 모터 구동 중 리셋 시 순간 튐 방지를 위해 안전하게 PWM만 꺼주고 리셋
+      TIM3->CCR1 = 0; TIM3->CCR2 = 0; TIM3->CCR3 = 0; TIM3->CCR4 = 0;
+      
+      NVIC_SystemReset(); // 이 코드가 실행되면 아래 코드는 실행되지 않고 칩이 재부팅됩니다.
+    }
+    pre_Reset_Flag = Reset_Flag;
+    
+    cnt++;
+    
+    TIM3 -> CCR1 = Motor_CCR1;
+    TIM3 -> CCR2 = Motor_CCR2;
+    TIM3 -> CCR3 = Motor_CCR3;
+    TIM3 -> CCR4 = Motor_CCR4;
+    
+    Brk_reset();
+    
+    if(cnt % 20 == 0)
+    {
+      Current_LPF_function();
+      Current_control_function();
+    }
+    
+    if(cnt % 200 == 0)
+    {
+      Encoder_function();
+      Velocity_control_function();
+      EBIMU9_DOFV5_function();
+      LIDER_function();
+    }
+    
+    if(cnt % 500 == 0)
+    {
+      LPF();
+      X_Y_aixs();
+      SlipCF_Update();
+      Velocity_ZUPT_Update();
+      angle_function();
+      
+      lumped_disturbance();
+    }
+    
+    if(cnt % 1000 == 0)
+    {
+      position_function();
+
+      
+      Trajectory_squre_function();
+      //Trajectory_triangle_function();
+      //Trajectory_eight_circle_function();
+   
+      //Trajectory_parallelogram_function();
+      //Trajectory_zigzag_function();
+      //Trajectory_star_function();
+      
+      //Trajectory_maca_square_function();
+      
+      Mecanum_wheel_body_DOB();
+      
+      
+      //non_DOB & add_DOB
+      Mecanum_wheel_Dynamics_add_DOB();
+      //Mecanum_wheel_Dynamics_non_DOB();
+      
+      
+      jetson_orin_tx();
+      jetson_orin_rx();
+      
+      cnt = 0;   
+    }
+  }
+}
+
+float apply_moving_average(float new_sample, float* buffer, float* current_sum, int* index)
+{
+  *current_sum -= buffer[*index];
+  buffer[*index] = new_sample;
+  *current_sum += new_sample;
+  
+  (*index)++;
+  if (*index >= CB_SIZE)
+    *index = 0;
+  
+  return (*current_sum) / CB_SIZE;
+}
+
+void Current_LPF_function()
+{
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)ADC_buffer, sizeof(ADC_buffer));
+  
+  Volt1 = (ADC_buffer[0] * 3.3) / 1023.0;
+  Current1 = ((Volt1 - 1.65) * Current_Scale) + Current_Offset1;
+  if (Current1 < 0)
+    Current1 = 0;
+  
+  Volt2 = (ADC_buffer[1] * 3.3) / 1023.0;
+  Current2 = ((Volt2 - 1.65) * Current_Scale) + Current_Offset2;
+  if (Current2 < 0)
+    Current2 = 0;
+  
+  Volt3 = (ADC_buffer[2] * 3.3) / 1023.0;
+  Current3 = ((Volt3 - 1.65) * Current_Scale) + Current_Offset3;
+  if (Current3 < 0)
+    Current3 = 0;
+  
+  Volt4 = (ADC_buffer[3] * 3.3) / 1023.0;
+  Current4 = ((Volt4 - 1.65) * Current_Scale) + Current_Offset4;
+  if (Current4 < 0)
+    Current4 = 0;
+  
+  Current_lpf1 = (Current1 * dt_current + Tau_current * pre_Current_lpf1) / (Tau_current + dt_current);
+  Current_ma1 = apply_moving_average(Current_lpf1, current_buffer1, &current_sum1, &buffer_index1);
+  
+  Current_lpf2 = (Current2 * dt_current + Tau_current * pre_Current_lpf2) / (Tau_current + dt_current);
+  Current_ma2 = apply_moving_average(Current_lpf2, current_buffer2, &current_sum2, &buffer_index2);
+  
+  Current_lpf3 = (Current3 * dt_current + Tau_current * pre_Current_lpf3) / (Tau_current + dt_current);
+  Current_ma3 = apply_moving_average(Current_lpf3, current_buffer3, &current_sum3, &buffer_index3);
+  
+  Current_lpf4 = (Current4 * dt_current + Tau_current * pre_Current_lpf4) / (Tau_current + dt_current);
+  Current_ma4 = apply_moving_average(Current_lpf4, current_buffer4, &current_sum4, &buffer_index4);
+  
+  pre_Current_lpf1 = Current_lpf1;
+  pre_Current_lpf2 = Current_lpf2;
+  pre_Current_lpf3 = Current_lpf3;
+  pre_Current_lpf4 = Current_lpf4;
+  
+  HAL_ADC_Stop_DMA(&hadc1);
+}
+
+void Current_control_function()
+{
+  /* Motor NO.1 --------------------------------------------------------------*/
+  if(target1 * pre_target1 < 0)
+  {
+    Current_Error1 = 0;
+    Current_Error_Sum1 = 0;
+    Vel_Error1 = 0;
+    Vel_Error_Sum1 = 0;
+  }
+  
+  if(Vel_Control1 >= 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 1);
+    dir1 = 1;
+    Current_Error1 = Vel_Control1 - Current_ma1;
+  }
+  else if(Vel_Control1 < 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, 0);
+    dir1 = -1;
+    Current_Error1= -Vel_Control1 - Current_ma1;
+  }
+  
+  Current_Error_Sum1 += Current_Error1 * 0.001;
+  Current_Control1 = Current_Kp * Current_Error1 + Current_Ki * Current_Error_Sum1 + 0.12 * Vel_Cur1;
+  
+  if(Current_Control1 >= 0)
+  {
+    if(Current_Control1 > Current_limit)
+    {
+      Current_Error_Sum1 -= (Current_Control1 - Current_limit) * 1 / Current_Kp / 3;
+      Current_Control1 = Current_limit;
+    }
+    Motor_CCR1 = Current_Control1;
+  }
+  else if(Current_Control1 < 0)
+  {
+    Current_Control1 = 0;
+    Motor_CCR1 = 0;
+  }
+  
+  
+  /* Motor NO.2 --------------------------------------------------------------*/
+  if(target2 * pre_target2 < 0)
+  {
+    Current_Error2 = 0;
+    Current_Error_Sum2 = 0;
+    Vel_Error2 = 0;
+    Vel_Error_Sum2 = 0;
+  }
+  
+  if(Vel_Control2 >= 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, 1);
+    dir2 = 1;
+    Current_Error2 = Vel_Control2 - Current_ma2;
+  }
+  else if(Vel_Control2 < 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, 0);
+    dir2 = -1;
+    Current_Error2= -Vel_Control2 - Current_ma2;
+  }
+  
+  Current_Error_Sum2 += Current_Error2 * 0.001;
+  Current_Control2 = Current_Kp * Current_Error2 + Current_Ki * Current_Error_Sum2 + 0.12 * Vel_Cur2;
+  
+  if(Current_Control2 >= 0)
+  {
+    if(Current_Control2 > Current_limit)
+    {
+      Current_Error_Sum2 -= (Current_Control2 - Current_limit) * 1 / Current_Kp / 3;
+      Current_Control2 = Current_limit;
+    }
+    Motor_CCR2 = Current_Control2;
+  }
+  
+  else if(Current_Control2 < 0)
+  {
+    Current_Control2 = 0;
+    Motor_CCR2 = 0;
+  }
+  
+  /* Motor NO.3 --------------------------------------------------------------*/
+  if(target3 * pre_target3 < 0)
+  {
+    Current_Error3 = 0;
+    Current_Error_Sum3 = 0;
+    Vel_Error3 = 0;
+    Vel_Error_Sum3 = 0;
+  }
+  
+  if(Vel_Control3 >= 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_14, 0);
+    dir3 = 1;
+    Current_Error3 = Vel_Control3 - Current_ma3;
+  }
+  else if(Vel_Control3 < 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOB , GPIO_PIN_14, 1);
+    dir3 = -1;
+    Current_Error3= -Vel_Control3 - Current_ma3;
+  }
+  
+  Current_Error_Sum3 += Current_Error3 * 0.001;
+  Current_Control3 = Current_Kp * Current_Error3 + Current_Ki * Current_Error_Sum3 + 0.12 * Vel_Cur3;
+  
+  if(Current_Control3 >= 0)
+  {
+    if(Current_Control3 > Current_limit)
+    {
+      Current_Error_Sum3 -= (Current_Control3 - Current_limit) * 1 / Current_Kp / 3;
+      Current_Control3 = Current_limit;
+    }
+    Motor_CCR3 = Current_Control3;
+  }
+  
+  else if(Current_Control3 < 0)
+  {
+    Current_Control3 = 0;
+    Motor_CCR3 = 0;
+  }
+  
+  /* Motor NO.4 --------------------------------------------------------------*/
+  if(target4 * pre_target4 < 0)
+  {
+    Current_Error4 = 0;
+    Current_Error_Sum4 = 0;
+    Vel_Error4 = 0;
+    Vel_Error_Sum4 = 0;
+  }
+  
+  if(Vel_Control4 >= 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, 0);
+    dir4 = 1;
+    Current_Error4 = Vel_Control4 - Current_ma4;
+  }
+  else if(Vel_Control4 < 0.0)
+  {
+    HAL_GPIO_WritePin(GPIOB, GPIO_PIN_15, 1);
+    dir4 = -1;
+    Current_Error4= -Vel_Control4 - Current_ma4;
+  }
+  
+  Current_Error_Sum4 += Current_Error4 * 0.001;
+  Current_Control4 = Current_Kp * Current_Error4 + Current_Ki * Current_Error_Sum4 + 0.12 * Vel_Cur4;
+  
+  if(Current_Control4 >= 0)
+  {
+    if(Current_Control4 > Current_limit)
+    {
+      Current_Error_Sum4 -= (Current_Control4 - Current_limit) * 1 / Current_Kp / 3;
+      Current_Control4 = Current_limit;
+    }
+    Motor_CCR4 = Current_Control4;
+  }
+  
+  else if(Current_Control4 < 0)
+  {
+    Current_Control4 = 0;
+    Motor_CCR4 =0;
+  }
+  pre_target1 = target1;
+  pre_target2 = target2;
+  pre_target3 = target3;
+  pre_target4 = target4;
+}
+
+void Velocity_control_function()
+{
+  /* Motor NO.1 --------------------------------------------------------------*/
+  Vel_Error1 = target1 - Vel_Cur1;
+  Vel_Error_Sum1 += Vel_Error1 * 0.01;
+  u_tilda1 = Vel_Kp * Vel_Error1 + Vel_Ki * Vel_Error_Sum1;
+  
+  DOB_Error1 = J * accel1 + B * Vel_Cur1 - Vel_Control1*kt;
+  d_hat1 = alpha * pre_d_hat1 + (1-alpha) * DOB_Error1;
+  
+  Vel_Control1 = u_tilda1; // - (1/kt) * d_hat1;
+  
+  if(Vel_Control1 >= 0)
+  {
+    if(Vel_Control1 > Vel_limit)
+    {
+      Vel_Error_Sum1 -= (Vel_Control1 - Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control1 = Vel_limit;
+    }
+  }
+  else if(Vel_Control1 < 0)
+  {
+    if(Vel_Control1 < -Vel_limit)
+    {
+      Vel_Error_Sum1 -= (Vel_Control1 + Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control1 = -Vel_limit;
+    }
+  }
+  
+  /* Motor NO.2 --------------------------------------------------------------*/
+  Vel_Error2 = target2 - Vel_Cur2;
+  Vel_Error_Sum2 += Vel_Error2 * 0.01;
+  u_tilda2 = Vel_Kp * Vel_Error2 + Vel_Ki * Vel_Error_Sum2;
+  
+  DOB_Error2 = J * accel2 + B * Vel_Cur2 - Vel_Control2*kt;
+  d_hat2 = alpha * pre_d_hat2 + (1-alpha) * DOB_Error2;
+  
+  Vel_Control2 = u_tilda2; // - (1/kt) * d_hat2;
+  
+  if(Vel_Control2 >= 0)
+  {
+    if(Vel_Control2 > Vel_limit)
+    {
+      Vel_Error_Sum2 -= (Vel_Control2 - Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control2 = Vel_limit;
+    }
+  }
+  else if(Vel_Control2 < 0)
+  {
+    if(Vel_Control2 < -Vel_limit)
+    {
+      Vel_Error_Sum2 -= (Vel_Control2 + Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control2 = -Vel_limit;
+    }
+  }
+  
+  /* Motor NO.3 --------------------------------------------------------------*/
+  Vel_Error3 = target3 - Vel_Cur3;
+  Vel_Error_Sum3 += Vel_Error3 * 0.01;
+  u_tilda3 = Vel_Kp * Vel_Error3 + Vel_Ki * Vel_Error_Sum3;
+  
+  DOB_Error3 = J * accel3 + B * Vel_Cur3 - Vel_Control3*kt;
+  d_hat3 = alpha * pre_d_hat3 + (1-alpha) * DOB_Error3;
+  
+  Vel_Control3 = u_tilda3; // - (1/kt) * d_hat3;
+  
+  if(Vel_Control3 >= 0)
+  {
+    if(Vel_Control3 > Vel_limit)
+    {
+      Vel_Error_Sum3 -= (Vel_Control3 - Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control3 = Vel_limit;
+    }
+  }
+  else if(Vel_Control3 < 0)
+  {
+    if(Vel_Control3 < -Vel_limit)
+    {
+      Vel_Error_Sum3 -= (Vel_Control3 + Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control3 = -Vel_limit;
+    }
+  }
+  
+  /* Motor NO.4 --------------------------------------------------------------*/
+  Vel_Error4 = target4 - Vel_Cur4;
+  Vel_Error_Sum4 += Vel_Error4 * 0.01;
+  u_tilda4 = Vel_Kp * Vel_Error4 + Vel_Ki * Vel_Error_Sum4;
+  
+  DOB_Error4 = J * accel4 + B * Vel_Cur4 - Vel_Control4*kt;
+  d_hat4 = alpha * pre_d_hat4 + (1-alpha) * DOB_Error4;
+  
+  Vel_Control4 = u_tilda4; // - (1/kt) * d_hat4;
+  
+  if(Vel_Control4 >= 0)
+  {
+    if(Vel_Control4 > Vel_limit)
+    {
+      Vel_Error_Sum4 -= (Vel_Control4 - Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control4 = Vel_limit;
+    }
+  }
+  else if(Vel_Control4 < 0)
+  {
+    if(Vel_Control4 < -Vel_limit)
+    {
+      Vel_Error_Sum4 -= (Vel_Control4 + Vel_limit) * 1 / Vel_Kp / 3;
+      Vel_Control4 = -Vel_limit;
+    }
+  }
+  pre_d_hat1 = d_hat1;
+  pre_d_hat2 = d_hat2;
+  pre_d_hat3 = d_hat3;
+  pre_d_hat4 = d_hat4;
+}
+
+void Encoder_function()
+{
+  Encoder1 = TIM1->CNT;
+  Encoder2 = TIM2->CNT;
+  Encoder3 = TIM5->CNT;
+  Encoder4 = TIM8->CNT;
+  
+  //Encoder NO.1
+  if(Encoder1 - pre_Encoder1 < -60000)
+    Linear_cnt1 ++;
+  
+  else if(Encoder1 - pre_Encoder1 > 60000)
+    Linear_cnt1 --;
+  
+  Linear_Encoder_cnt1 = Encoder1 + Linear_cnt1 * 65000;
+  
+  Vel_Cur1 = (Linear_Encoder_cnt1 - pre_Linear_Encoder_cnt1) * 0.15707;
+  
+  Vel_omega1 = Vel_Cur1 / 14.0;
+  
+  accel1 = (Vel_Cur1 - pre_Vel_Cur1)/0.01;
+  
+  pre_Encoder1 = Encoder1;
+  
+  pre_Linear_Encoder_cnt1 = Linear_Encoder_cnt1;
+  
+  pre_Vel_Cur1 = Vel_Cur1;
+  
+  
+  //Encoder NO.2
+  if(Encoder2 - pre_Encoder2 < -60000)
+    Linear_cnt2 ++;
+  
+  else if(Encoder2 - pre_Encoder2 > 60000)
+    Linear_cnt2 --;
+  
+  Linear_Encoder_cnt2 = Encoder2 + Linear_cnt2 * 65000;
+  
+  Vel_Cur2 = (Linear_Encoder_cnt2 - pre_Linear_Encoder_cnt2) * 0.15707;
+  
+  Vel_omega2 = Vel_Cur2 / 14.0;
+  
+  accel2 = (Vel_Cur2 - pre_Vel_Cur2)/0.01;
+  
+  pre_Encoder2 = Encoder2;
+  
+  pre_Linear_Encoder_cnt2 = Linear_Encoder_cnt2;
+  
+  pre_Vel_Cur2 = Vel_Cur2;
+  
+  
+  //Encoder NO.3
+  if(Encoder3 - pre_Encoder3 < -60000)
+    Linear_cnt3 ++;
+  
+  else if(Encoder3 - pre_Encoder3 > 60000)
+    Linear_cnt3 --;
+  
+  Linear_Encoder_cnt3 = Encoder3 + Linear_cnt3 * 65000;
+  
+  Vel_Cur3 = (Linear_Encoder_cnt3 - pre_Linear_Encoder_cnt3) * 0.15707;
+  
+  Vel_Cur3 = -Vel_Cur3;
+  
+  Vel_omega3 = Vel_Cur3 / 14.0;
+  
+  accel3 = (Vel_Cur3 - pre_Vel_Cur3)/0.01;
+  
+  pre_Encoder3 = Encoder3;
+  
+  pre_Linear_Encoder_cnt3 = Linear_Encoder_cnt3;
+  
+  pre_Vel_Cur3 = Vel_Cur3;
+  
+  
+  //Encoder NO.4
+  if(Encoder4 - pre_Encoder4 < -60000)
+    Linear_cnt4 ++;
+  
+  else if(Encoder4 - pre_Encoder4 > 60000)
+    Linear_cnt4 --;
+  
+  Linear_Encoder_cnt4 = Encoder4 + Linear_cnt4 * 65000;
+  
+  Vel_Cur4 = (Linear_Encoder_cnt4 - pre_Linear_Encoder_cnt4) * 0.15707;
+  
+  Vel_Cur4 = -Vel_Cur4;
+  
+  Vel_omega4 = Vel_Cur4 / 14.0;
+  
+  accel4 = (Vel_Cur4 - pre_Vel_Cur4)/0.01;
+  
+  pre_Encoder4 = Encoder4;
+  
+  pre_Linear_Encoder_cnt4 = Linear_Encoder_cnt4;
+  
+  pre_Vel_Cur4 = Vel_Cur4;
+}
+
+
+void EBIMU9_DOFV5_function()
+{
+  HAL_UART_Receive_DMA(&huart1,gyro_buffer, GYRO_BUFFER_SIZE);
+  
+  for(int i = 0; i < GYRO_BUFFER_SIZE-1; i++)
+  {
+    if(gyro_buffer[i] == 0x55 && gyro_buffer[i+1] == 0x55)
+    {
+      
+      for(int j = 0 ; j < i ; j++)
+      {
+        gyro_bufferCpy[j+(22-i)] = gyro_buffer[j];
+      }
+      
+      for(int k = 0 ; k < 22 - i ; k++)
+      {
+        gyro_bufferCpy[k] = gyro_buffer[i+k];
+      }
+    }
+  }
+  
+  if(gyro_bufferCpy[0] == 0x55 && gyro_bufferCpy[1] == 0x55)
+    
+  {
+    Euler_Roll = (gyro_bufferCpy[2] << 8) | gyro_bufferCpy[3];
+    Euler_Pitch = (gyro_bufferCpy[4] << 8) | gyro_bufferCpy[5];
+    Euler_Yaw = (gyro_bufferCpy[6] << 8) | gyro_bufferCpy[7];
+    
+    
+    roll = Euler_Roll / 100.0;
+    pitch = Euler_Pitch / 100.0;
+    yaw_raw_deg = Euler_Yaw / 100.0;
+    
+    if (!yaw_offset_set) {
+      yaw_offset = yaw_raw_deg;
+      yaw_offset_set = 1;
+    }
+    yaw = yaw_raw_deg - yaw_offset;  
+    
+    Euler_Roll_V = (gyro_bufferCpy[8] << 8) | gyro_bufferCpy[9];
+    Euler_Pitch_V = (gyro_bufferCpy[10] << 8) | gyro_bufferCpy[11];
+    Euler_Yaw_V = (gyro_bufferCpy[12] << 8) | gyro_bufferCpy[13];
+    
+    roll_V = Euler_Roll_V/ 10.0;
+    pitch_V = Euler_Pitch_V / 10.0;
+    yaw_V = Euler_Yaw_V / 10.0;
+    
+    Euler_X_aixs_A = (gyro_bufferCpy[14] << 8 | gyro_bufferCpy[15]);
+    Euler_Y_aixs_A = (gyro_bufferCpy[16] << 8 | gyro_bufferCpy[17]);
+    Euler_Z_aixs_A = (gyro_bufferCpy[18] << 8 | gyro_bufferCpy[19]);
+    
+    X_aixs_A = Euler_X_aixs_A / 1000.0 * G;
+    Y_aixs_A = Euler_Y_aixs_A / 1000.0 * G;
+    Z_aixs_A = Euler_Z_aixs_A / 1000.0 * G;
+    
+    
+  }
+  else
+  {
+    //HAL_UART_Init(&huart2);
+    //flag = 2;
+  }
+}
+
+
+static inline void Acc_BodyToWorld_deg(float ax, float ay, float az,float roll_deg, float pitch_deg, float yaw_deg,volatile float *ax_w, volatile float *ay_w, volatile float *az_w)
+{
+  float r = roll_deg  * DEG2RAD;
+  float p = pitch_deg * DEG2RAD;
+  float y = yaw_deg   * DEG2RAD;
+  
+  float cr = cosf(r), sr = sinf(r);
+  float cp = cosf(p), sp = sinf(p);
+  float cy = cosf(y), sy = sinf(y);
+  
+  *ax_w = (cy*cp)*ax + (cy*sp*sr - sy*cr)*ay + (cy*sp*cr + sy*sr)*az;
+  *ay_w = (sy*cp)*ax + (sy*sp*sr + cy*cr)*ay + (sy*sp*cr - cy*sr)*az;
+  *az_w = (-sp)*ax + (cp*sr)*ay + (cp*cr)*az;
+}
+
+
+static inline float Acc_MA_Update_X(float new_acc_x)
+{
+  acc_wX_ma_sum -= acc_wX_ma_buf[acc_wX_ma_idx];
+  acc_wX_ma_buf[acc_wX_ma_idx] = new_acc_x;
+  acc_wX_ma_sum += new_acc_x;
+  acc_wX_ma_idx++;
+  if (acc_wX_ma_idx >= ACC_MA_SIZE)
+    acc_wX_ma_idx = 0;
+  
+  return acc_wX_ma_sum / (float)ACC_MA_SIZE;
+}
+
+
+static inline float Acc_MA_Update_Y(float new_acc_y)
+{
+  acc_wY_ma_sum -= acc_wY_ma_buf[acc_wY_ma_idx];
+  acc_wY_ma_buf[acc_wY_ma_idx] = new_acc_y;
+  acc_wY_ma_sum += new_acc_y;
+  acc_wY_ma_idx++;
+  if (acc_wY_ma_idx >= ACC_MA_SIZE)
+    acc_wY_ma_idx = 0;
+  
+  return acc_wY_ma_sum / (float)ACC_MA_SIZE;
+}
+
+
+static inline float Acc_LPF_Update_X(float acc_x_ma)
+{
+  float acc_x_lpf;
+  acc_x_lpf = (acc_x_ma * dt_lpf + Tau_lpf * acc_wX_lpf_prev) / (Tau_lpf + dt_lpf);
+  acc_wX_lpf_prev = acc_x_lpf;
+  
+  return acc_x_lpf;
+}
+
+
+static inline float Acc_LPF_Update_Y(float acc_y_ma)
+{
+  float acc_y_lpf;
+  acc_y_lpf = (acc_y_ma * dt_lpf + Tau_lpf * acc_wY_lpf_prev) / (Tau_lpf + dt_lpf);
+  acc_wY_lpf_prev = acc_y_lpf;
+  
+  return acc_y_lpf;
+}
+
+
+void LPF()
+{
+  Acc_BodyToWorld_deg(X_aixs_A, Y_aixs_A, Z_aixs_A, roll, pitch, yaw, &acc_wX, &acc_wY, &acc_wZ);
+  acc_wX_ma = Acc_MA_Update_X(acc_wX);
+  acc_wY_ma = Acc_MA_Update_Y(acc_wY);
+  
+  acc_wX_lpf = Acc_LPF_Update_X(acc_wX_ma);
+  acc_wY_lpf = Acc_LPF_Update_Y(acc_wY_ma);
+}
+
+
+static inline float fabsf_fast(float x)
+{
+  return (x >= 0.0f) ? x : -x;
+}
+
+
+static inline uint8_t IsTrulyStationary(void)
+{
+  const float GYRO_THR = 2.0f;    // deg/s
+  const float VENC_THR = 0.03f;   // m/s
+  const float VREF_THR = 0.01f;   // m/s
+  
+  float gyro_sum = fabsf_fast(roll_V) + fabsf_fast(pitch_V) + fabsf_fast(yaw_V);
+  if (gyro_sum > GYRO_THR) return 0;
+  
+  if (fabsf_fast(Vx_enc) > VENC_THR) return 0;
+  if (fabsf_fast(Vy_enc) > VENC_THR) return 0;
+  
+  // 명령도 0일 때만 "정지"
+  if (fabsf_fast(Vx_traj_b) > VREF_THR) return 0;
+  if (fabsf_fast(Vy_traj_b) > VREF_THR) return 0;
+  
+  return 1;
+}
+
+void Velocity_ZUPT_Update(void)
+{
+  static int st_cnt = 0;
+  const int ST_N = 50;
+  
+  if (IsTrulyStationary()) st_cnt++;
+  else st_cnt = 0;
+  
+  if (st_cnt >= ST_N) {
+    vel_x_cf = 0.0f;
+    vel_y_cf = 0.0f;
+    vimu_x = 0.0f;   // 선택(드리프트 억제)
+    vimu_y = 0.0f;
+  }
+}
+
+
+void X_Y_aixs() 
+{
+  Vy_enc = r*0.25f*(Vel_omega1 + Vel_omega2 + Vel_omega3 + Vel_omega4);
+  Vx_enc = r*0.25f*(-Vel_omega1 + Vel_omega2 + Vel_omega3 - Vel_omega4);
+  Ww_enc = r*0.25f/(a+b) * (-Vel_omega1 + Vel_omega2 - Vel_omega3 + Vel_omega4);
+  
+  Sx += Vx_enc*0.025;
+  Sy += Vy_enc*0.025;
+}
+
+
+static inline float clampf2(float x, float lo, float hi)
+{
+  if (x < lo) return lo;
+  if (x > hi) return hi;
+  return x;
+}
+
+void SlipCF_Update(void)
+{
+  // 1) IMU-only velocity prediction (참조용)
+  vimu_x += acc_wX_lpf * dt_slip;
+  vimu_y += acc_wY_lpf * dt_slip;
+  
+  // 2) abs values
+  float ax = acc_wX_lpf;
+  float ay = acc_wY_lpf;
+  
+  float aabs_x = (ax >= 0.0f) ? ax : -ax;
+  float aabs_y = (ay >= 0.0f) ? ay : -ay;
+  
+  float venc_x = Vx_enc;
+  float venc_y = Vy_enc;
+  
+  float abs_venc_x = (venc_x >= 0.0f) ? venc_x : -venc_x;
+  float abs_venc_y = (venc_y >= 0.0f) ? venc_y : -venc_y;
+  
+  // 3) lambda adaptation gain
+  //    k_lambda_base: 너무 크면 lambda 튐 / 너무 작으면 적응 느림
+  const float k_lambda_base = 0.008f;
+  
+  float kx = (aabs_x > AIMU_MIN) ? k_lambda_base : (0.2f * k_lambda_base);
+  float ky = (aabs_y > AIMU_MIN) ? k_lambda_base : (0.2f * k_lambda_base);
+  
+  // 4) Update lambda_x
+  if (abs_venc_x > VENC_MIN)
+  {
+    float ex = vimu_x - lambda_x * venc_x;   // e = vimu - lambda*venc
+    lambda_x += kx * ex * venc_x;            // gradient step
+    lambda_x = clampf2(lambda_x, LAM_MIN_X, LAM_MAX_X);
+  }
+  
+  // 5) Update lambda_y
+  
+  if (abs_venc_y > VENC_MIN)
+  {
+    float ey = vimu_y - lambda_y * venc_y;
+    lambda_y += ky * ey * venc_y;
+    lambda_y = clampf2(lambda_y, LAM_MIN_Y, LAM_MAX_Y);
+  }
+  
+  // 6) Correct encoder velocity
+  float vx_enc_corr = lambda_x * Vx_enc;
+  float vy_enc_corr = lambda_y * Vy_enc;
+  
+  // 7) Complementary fusion
+  float alpha_x = tau_cf_base_x / (tau_cf_base_x + dt_slip);
+  float alpha_y = tau_cf_base_y / (tau_cf_base_y + dt_slip);
+  
+  float vx_imu_pred = vel_x_cf + acc_wX_lpf * dt_slip;
+  float vy_imu_pred = vel_y_cf + acc_wY_lpf * dt_slip;
+  
+  vel_x_cf = alpha_x * vx_imu_pred + (1.0f - alpha_x) * vx_enc_corr;
+  vel_y_cf = alpha_y * vy_imu_pred + (1.0f - alpha_y) * vy_enc_corr;
+  
+  // 8) (선택) vimu 동기화(폭주 방지)
+  const float sync = 0.02f; // 0~0.05
+  vimu_x = (1.0f - sync) * vimu_x + sync * vel_x_cf;
+  vimu_y = (1.0f - sync) * vimu_y + sync * vel_y_cf;
+}
+
+void Velocity_Update_Deadzone(void)
+{
+  if (fabsf_fast(acc_wX_lpf) < ACC_DEAD_THR)
+    acc_dead_cnt_x++;
+  else
+    acc_dead_cnt_x = 0;
+  
+  if (fabsf_fast(acc_wY_lpf) < ACC_DEAD_THR)
+    acc_dead_cnt_y++;
+  else
+    acc_dead_cnt_y = 0;
+  
+  //if (acc_dead_cnt_x >= ACC_DEAD_CNT_TH)
+  //vel_x_cf = 0.0f;
+  //if (acc_dead_cnt_y >= ACC_DEAD_CNT_TH)
+  // vel_y_cf = 0.0f;
+}
+
+void position_function(void)
+{
+  uint8_t stationary = IsTrulyStationary();
+  if (stationary)
+  {
+    vel_x_cf = 0.0f;
+    if (!was_stationary_x)
+    {
+      pos_x_hold = pos_x;
+      was_stationary_x = 1;
+    }
+    
+    pos_x = pos_x_hold;
+  }
+  else
+  {
+    was_stationary_x = 0;
+    pos_x += vel_x_cf * dt_pos;
+  }
+  
+  if (stationary)
+  {
+    vel_y_cf = 0.0f;
+    
+    if (!was_stationary_y)
+    {
+      pos_y_hold = pos_y;
+      was_stationary_y = 1;
+    }
+    
+    pos_y = pos_y_hold;
+  }
+  else
+  {
+    was_stationary_y = 0;
+    pos_y += vel_y_cf * dt_pos;
+  }
+}
+
+void angle_function()
+{
+  yaw_error = yaw_ref - yaw;
+  if(yaw_error < -180)
+  {
+    yaw_error = yaw_error + 360.0;
+  }
+  else if(yaw_error > 180)
+  {
+    yaw_error = yaw_error - 360.0;
+  }
+  
+  yaw_error_sum += yaw_error * 0.025;
+  yaw_control = yaw_error * yaw_kp - yaw_V * yaw_kd;
+}
+
+void Mecanum_wheel_Dynamics_add_DOB()
+{
+  Omega1 = (1/r)*(Vy_b - Vx_b -(a+b)*W_b);
+  Omega2 = (1/r)*(Vy_b + Vx_b -(a+b)*W_b);
+  Omega3 = (1/r)*(Vy_b + Vx_b +(a+b)*W_b);
+  Omega4 = (1/r)*(Vy_b - Vx_b +(a+b)*W_b);
+  
+  target1 = Omega1+yaw_control;
+  target2 = Omega2+yaw_control;
+  target3 = Omega3-yaw_control;
+  target4 = Omega4-yaw_control;
+  
+  Vy_target = Vx_b/14.0;
+  Vx_target = Vy_b/14.0;
+  
+  Sx_ref += Vx_target * 0.05; 
+  Sy_ref += Vy_target * 0.05;
+}
+
+void Mecanum_wheel_Dynamics_non_DOB()
+{
+  Omega1 = (1/r)*(Vy_traj_b - Vx_traj_b -(a+b)*W_b);
+  Omega2 = (1/r)*(Vy_traj_b + Vx_traj_b -(a+b)*W_b);
+  Omega3 = (1/r)*(Vy_traj_b + Vx_traj_b +(a+b)*W_b);
+  Omega4 = (1/r)*(Vy_traj_b - Vx_traj_b +(a+b)*W_b);
+  
+  target1 = Omega1+yaw_control;
+  target2 = Omega2+yaw_control;
+  target3 = Omega3-yaw_control;
+  target4 = Omega4-yaw_control;
+  
+  Vx_target = Vx_traj_b/14.0;
+  Vy_target = Vy_traj_b/14.0;
+  
+  Sx_ref += Vx_target * 0.05; 
+  Sy_ref += Vy_target * 0.05;
+}
+
+static inline void RotateCopy9(uint8_t *dst, const uint8_t *src, int start)
+{
+  for(int k = 0; k < LIDAR_FRAME_LEN; k++)
+  {
+    dst[k] = src[(start + k) % LIDAR_FRAME_LEN];
+  }
+}
+
+static inline uint16_t SpikeCut_u16(uint16_t prev, uint16_t curr, uint16_t th)
+{
+  int diff = (int)curr - (int)prev;
+  if (diff < 0) diff = -diff;
+  
+  if (diff >= th)
+    return prev;
+  else
+    return curr;
+}
+
+void LIDER_function(void)
+{
+  HAL_UART_Receive_DMA(&huart3, Lider_rx_data_y, LIDAR_FRAME_LEN); // y axis
+  HAL_UART_Receive_DMA(&huart4, Lider_rx_data_x, LIDAR_FRAME_LEN); // x axis
+  
+  for(int i = 0; i < LIDAR_FRAME_LEN; i++)
+  {
+    if(Lider_rx_data_x[i] == LIDAR_HDR0 && Lider_rx_data_x[(i+1) % LIDAR_FRAME_LEN] == LIDAR_HDR1)
+    {
+      RotateCopy9(Lider_rx_data_xCpy, Lider_rx_data_x, i); // i가 헤더 시작
+      break;
+    }
+  }
+  if(Lider_rx_data_xCpy[0] == LIDAR_HDR0 && Lider_rx_data_xCpy[1] == LIDAR_HDR1)
+  {
+    Dist_x     = (Lider_rx_data_xCpy[2]) | (Lider_rx_data_xCpy[3] << 8);
+    strength_x = (Lider_rx_data_xCpy[4]) | (Lider_rx_data_xCpy[5] << 8);
+    Temp_x     = (Lider_rx_data_xCpy[6]) | (Lider_rx_data_xCpy[7] << 8);
+    check_x    =  Lider_rx_data_xCpy[8];
+  }
+  for(int j = 0; j < LIDAR_FRAME_LEN; j++)
+  {
+    if(Lider_rx_data_y[j] == LIDAR_HDR0 && Lider_rx_data_y[(j+1) % LIDAR_FRAME_LEN] == LIDAR_HDR1)
+    {
+      RotateCopy9(Lider_rx_data_yCpy, Lider_rx_data_y, j);
+      break;
+    }
+  }
+  if(Lider_rx_data_yCpy[0] == LIDAR_HDR0 && Lider_rx_data_yCpy[1] == LIDAR_HDR1)
+  {
+    Dist_y     = (Lider_rx_data_yCpy[2]) | (Lider_rx_data_yCpy[3] << 8);
+    strength_y = (Lider_rx_data_yCpy[4]) | (Lider_rx_data_yCpy[5] << 8);
+    Temp_y     = (Lider_rx_data_yCpy[6]) | (Lider_rx_data_yCpy[7] << 8);
+    check_y    =  Lider_rx_data_yCpy[8];
+  }
+  
+  if (!dist_init)
+  {
+    Dist_x_prev = Dist_x;
+    Dist_y_prev = Dist_y;
+    dist_init = 1;
+  }
+  else
+  {
+    Dist_x = SpikeCut_u16(Dist_x_prev, Dist_x, 500);
+    Dist_y = SpikeCut_u16(Dist_y_prev, Dist_y, 500);
+    
+    Dist_x_prev = Dist_x;
+    Dist_y_prev = Dist_y;
+  }
+  
+  Lider_x_axis  = (Dist_x - 30.0f) * 0.01f;
+  Lider_y_axis = (200.0f - Dist_y) * 0.01f;
+}
+
+
+static inline float clampf(float x, float lo, float hi)
+{
+  if (x < lo) return lo;
+  if (x > hi) return hi;
+  return x;
+}
+/*
+static inline float v_profile_linear(float d, float v_max)
+{
+const float d_brake = 0.08f;   // 감속 시작 거리
+const float d_stop  = 0.005f;   
+const float v_min   = 1.0f;    // 스톨 방지 최소속도(중간 구간용)
+
+if (d <= 0.0f) return 0.0f;
+if (d <= d_stop) return 0.0f;
+if (d >= d_brake) return v_max;
+
+float v = v_max * (d / d_brake);
+v = clampf(v, 0.0f, v_max);
+
+// ★ d가 충분히 남아있을 때만 v_min 적용 (정지 근처엔 적용 안 함)
+if (d > (3.0f * d_stop) && v > 0.0f && v < v_min) v = v_min;
+
+return v;
+}
+*/
+
+static inline void SoftStop_All(void)
+{
+  // trajectory command만 0으로 (DOB는 계속 돌게)
+  Vx_traj_b = 0.0f;
+  Vy_traj_b = 0.0f;
+  W_b       = 0.0f;
+  
+  Vx_target = 0.0f;
+  Vy_target = 0.0f;
+}
+
+
+static inline void ForceStop_All(void)
+{
+  Vx_b = 0.0f; Vy_b = 0.0f; W_b = 0.0f;
+  Vx_traj_b = 0.0f; Vy_traj_b = 0.0f;
+  
+  // PI 적분항/출력 리셋
+  Vel_Error_Sum1 = Vel_Error_Sum2 = Vel_Error_Sum3 = Vel_Error_Sum4 = 0.0f;
+  Vel_Control1   = Vel_Control2   = Vel_Control3   = Vel_Control4   = 0.0f;
+  
+  Current_Error_Sum1 = Current_Error_Sum2 = Current_Error_Sum3 = Current_Error_Sum4 = 0.0f;
+  Current_Control1   = Current_Control2   = Current_Control3   = Current_Control4   = 0.0f;
+  
+  // PWM 0
+  Motor_CCR1 = 0; Motor_CCR2 = 0; Motor_CCR3 = 0; Motor_CCR4 = 0;
+  
+  // 목표값 0
+  target1 = 0.0f; target2 = 0.0f; target3 = 0.0f; target4 = 0.0f;
+}
+
+void Trajectory_squre_function(void)
+{
+  static int trajectory_state = 0;
+  
+  static uint8_t corner_hold = 0;
+  static int hold_cnt = 0;
+  
+  // 코너 홀드 끝나고 하드리셋(ForceStop) 할지 여부
+  // 사각형 계속 돌 거면 0 유지, “한 변만 테스트”하고 끝낼 거면 1로 세팅
+  static uint8_t do_force_after_hold = 0;
+  
+  // ====== 튜닝 파라미터 ======
+  const float L_traj = 1.5f;   // 사각형 한 변 길이 [m]
+  const float dt_ref = 0.05;
+  // float v_traj 는 전역에 이미 있음 (너 코드: float v_traj = 5.0;)
+  
+  // ====== “한 축만 직진 테스트” 하고 싶으면 여기만 바꾸면 됨 ======
+  // 1) 아래 #define을 1로 바꾸면 Y+ 방향으로만 가는 모드
+  // 2) 아래 #define을 1로 바꾸면 X+ 방향으로만 가는 모드
+  // (둘 다 1이면 Y가 우선 적용되게 해놨음)
+#define TEST_ONLY_Y_POS 0  // <-- Y축(+Y)만 가고 싶으면 1로
+#define TEST_ONLY_X_POS 0  // <-- X축(+X)만 가고 싶으면 1로
+  
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    trajectory_state = 0;
+    corner_hold = 0;
+    hold_cnt = 0;
+    do_force_after_hold = 0;
+    s_ref = 0.0f;
+    return;
+  }
+  
+  // ====== 코너 홀드 구간 ======
+  if (corner_hold)
+  {
+    SoftStop_All();  // ★ 여기서는 DOB 상태 유지하면서 “명령만 0”
+    
+    if (++hold_cnt >= CORNER_HOLD_N)
+    {
+      corner_hold = 0;
+      hold_cnt = 0;
+      s_ref = 0.0f;
+      
+      if (do_force_after_hold)
+      {
+        ForceStop_All();
+        Brk = 1;     // “한 변만 테스트 후 종료” 용도
+        do_force_after_hold = 0;
+        return;
+      }
+    }
+    return;
+  }
+  
+  // ====== 목표 world 속도 ======
+  
+  // ====== 한 축만 테스트 모드 ======
+#if (TEST_ONLY_Y_POS == 1)
+  {
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1; // 한 변만 하고 끝낼거면 1
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = 0.0f;
+    vy_world = +v;
+    
+    s_ref += fabsf(v) * dt_ref / 14.0;
+  }
+#elif (TEST_ONLY_X_POS == 1)
+  {
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1; // 한 변만 하고 끝낼거면 1
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = +v;
+    vy_world = 0.0f;
+    
+    s_ref += fabsf(v) * dt_ref / 14.0;
+  }
+  
+#else
+  // ====== 사각형 경로 ======
+  // state 0: (0,0) -> (0,L) : +Y
+  // state 1: (0,L) -> (L,L) : +X
+  // state 2: (L,L) -> (L,0) : -Y
+  // state 3: (L,0) -> (0,0) : -X
+  switch (trajectory_state)
+  {
+  case 0:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 1;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = 0.0f;
+    vy_world = +v;
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  case 1:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 2;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = +v;
+    vy_world = 0.0f;
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  case 2:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 3;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = 0.0f;
+    vy_world = -v;
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  case 3:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1;
+      trajectory_state = 4;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = -v;
+    vy_world = 0.0f;
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  case 4:
+    {
+      float dx_comp = Manipulator_Target_X;
+      float dy_comp = Manipulator_Target_Y;
+      float comp_dist = sqrtf(dx_comp * dx_comp + dy_comp * dy_comp);
+      
+      // 보정 이동 완료 확인
+      if (comp_dist <= 0.001f || s_ref >= comp_dist)
+      {
+        corner_hold = 1;
+        hold_cnt = 0;
+        do_force_after_hold = 1; // 보정 주행까지 완벽히 끝났으므로 최종 정지 (Brk = 1)
+        trajectory_state = 0;
+        SoftStop_All();
+        return;
+      }
+      
+      // 보정 오프셋 방향 단위 벡터 계산 및 world 속도 생성
+      v = v_traj;
+      vx_world = v * (dx_comp / comp_dist);
+      vy_world = v * (dy_comp / comp_dist);
+      s_ref += fabsf(v) * dt_ref / 14.0f;
+    }
+    break;
+    
+  default:
+    trajectory_state = 0;
+    s_ref = 0.0f;
+    break;
+  }
+#endif
+  
+  // ====== world -> body 변환 (yaw 기준) ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+void Trajectory_triangle_function(void)
+{
+  static int trajectory_state = 0;
+  
+  static uint8_t corner_hold = 0;
+  static int hold_cnt = 0;
+  
+  static uint8_t do_force_after_hold = 0;
+  
+  // ====== 튜닝 파라미터 ======
+  const float L_traj = 1.5f;      // 정삼각형 한 변 [m]
+  const float dt_ref = 0.05f;   
+  
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    trajectory_state = 0;
+    corner_hold = 0;
+    hold_cnt = 0;
+    do_force_after_hold = 0;
+    s_ref = 0.0f;
+    return;
+  }
+  
+  // ====== 코너 홀드 구간 ======
+  if (corner_hold)
+  {
+    SoftStop_All();
+    
+    if (++hold_cnt >= CORNER_HOLD_N)
+    {
+      corner_hold = 0;
+      hold_cnt = 0;
+      s_ref = 0.0f;   // 다음 변 시작 전에 ref 진행거리 초기화
+      
+      if (do_force_after_hold)
+      {
+        ForceStop_All();
+        Brk = 1;
+        do_force_after_hold = 0;
+        return;
+      }
+    }
+    return;
+  }
+  
+  // ====== 정삼각형 경로 ======
+  // state 0: (0,0) -> (0,L)                  : +Y
+  // state 1: (0,L) -> (sqrt(3)/2*L, L/2)     : 우하향
+  // state 2: (sqrt(3)/2*L, L/2) -> (0,0)     : 좌하향
+  
+  switch (trajectory_state)
+  {
+  case 0:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 1;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = 0.0f;
+    vy_world = +v;
+    
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  case 1:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 2;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = +0.8660254f * v;   // cos(30°)
+    vy_world = -0.5f * v;         // -sin(30°)
+    
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  case 2:
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1;
+      trajectory_state = 0;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = -0.8660254f * v;
+    vy_world = -0.5f * v;
+    
+    s_ref += fabsf(v) * dt_ref / 14.0;
+    break;
+    
+  default:
+    trajectory_state = 0;
+    s_ref = 0.0f;
+    break;
+  }
+  
+  // ====== world -> body 변환 (yaw 기준) ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+void Trajectory_eight_circle_function(void)
+{
+  static int circle_state = 0;     // 0: 아래 원(CCW), 1: 위 원(CW)
+  static float theta = -pi/2.0f;   // 시작점: 아래 원의 맨 아래
+  static uint8_t done_once = 0;
+  
+  // ====== 파라미터 ======
+  const float R = 0.5f;           // 원 반지름 [m]  -> 지름 1.0 m
+  const float dt_ref = 0.05f;     
+  
+  // 아래 원 중심: (0, -R)
+  // 위   원 중심: (0, +R)
+  
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    
+    circle_state = 0;
+    theta = -pi/2.0f;
+    done_once = 0;
+    return;
+  }
+  
+  if (done_once)
+  {
+    SoftStop_All();
+    return;
+  }
+  
+  // 선속도 v_traj [m/s]를 기준으로 각속도 계산
+  // v = R * omega  -> omega = v/R
+  float omega = 0.0f;
+  if (R > 1e-6f)
+  {
+    omega = v_traj / R;
+  }
+  
+  // ====== 원 궤적 ======
+  if (circle_state == 0)
+  {
+    // ==============================
+    // 아래 원: CCW
+    // 중심 (0, -R)
+    // x = R cos(theta)
+    // y = -R + R sin(theta)
+    // ==============================
+    
+    vx_world = -R * sinf(theta) * omega;
+    vy_world =  R * cosf(theta) * omega;
+    
+    theta += omega * dt_ref / 14.0;
+    
+    // 아래 원 한 바퀴 끝 -> 위 원으로 전환
+    if (theta >= 3.0f*pi/2.0f)
+    {
+      theta = pi/2.0f;   // 위 원 접점 시작각
+      circle_state = 1;
+    }
+  }
+  else
+  {
+    // ==============================
+    // 위 원: CW
+    // 중심 (0, +R)
+    // x = R cos(theta)
+    // y = +R + R sin(theta)
+    // CW 이므로 theta 감소
+    // ==============================
+    
+    vx_world = +R * sinf(theta) * omega;
+    vy_world = -R * cosf(theta) * omega;
+    
+    theta -= omega * dt_ref / 14.0;
+    
+    // 위 원 한 바퀴 끝 -> 아래 원으로 전환
+    if (theta <= -3.0f*pi/2.0f)
+    {
+      done_once = 1;
+      SoftStop_All();
+      Brk = 1;     // 완전히 끝내고 싶으면 유지
+      return;
+    }
+  }
+  
+  // ====== world -> body 변환 ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+
+void Trajectory_parallelogram_function(void)
+{
+  static int trajectory_state = 0;
+  
+  static uint8_t corner_hold = 0;
+  static int hold_cnt = 0;
+  
+  static uint8_t do_force_after_hold = 0;
+  
+  // ====== 튜닝 파라미터 ======
+  const float L_traj = 1.5f;      // 평행사변형 한 변의 길이 [m]
+  const float dt_ref = 0.05f;   
+  
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    trajectory_state = 0;
+    corner_hold = 0;
+    hold_cnt = 0;
+    do_force_after_hold = 0;
+    s_ref = 0.0f;
+    return;
+  }
+  
+  // ====== 코너 홀드 구간 ======
+  if (corner_hold)
+  {
+    SoftStop_All();
+    
+    if (++hold_cnt >= CORNER_HOLD_N)
+    {
+      corner_hold = 0;
+      hold_cnt = 0;
+      s_ref = 0.0f;   // 다음 변 시작 전에 ref 진행거리 초기화
+      
+      if (do_force_after_hold)
+      {
+        ForceStop_All();
+        Brk = 1;
+        do_force_after_hold = 0;
+        return;
+      }
+    }
+    return;
+  }
+  
+  // ====== 평행사변형 경로 (모든 변 1.5m, 내각 60°/120°) ======
+  // state 0: 우상향 (60° 방향 이동)
+  // state 1: 우측 수평 (+X 방향 이동)
+  // state 2: 좌하향 (240° 방향 이동) -> state 0과 평행
+  // state 3: 좌측 수평 (-X 방향 이동) -> state 1과 평행 및 원점 복귀
+  
+  switch (trajectory_state)
+  {
+  case 0: // 우상향 변 (60° 방향)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 1;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = +0.5f * v;         // cos(60°)
+    vy_world = +0.8660254f * v;   // sin(60°)
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 1: // 상단 수평 변 (+X 방향)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 2;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = +v;
+    vy_world = 0.0f;
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 2: // 좌하향 변 (240° 방향, state 0과 평행)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 3;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = -0.5f * v;         // -cos(60°)
+    vy_world = -0.8660254f * v;   // -sin(60°)
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+
+  case 3: // 하단 수평 변 (-X 방향, state 1과 평행 - 복귀)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1;    // 1주기 완료 후 정지
+      trajectory_state = 0;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = -v;
+    vy_world = 0.0f;
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  default:
+    trajectory_state = 0;
+    s_ref = 0.0f;
+    break;
+  }
+  
+  // ====== world -> body 변환 (yaw 기준) ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+void Trajectory_zigzag_function(void)
+{
+  static int trajectory_state = 0;
+  
+  static uint8_t corner_hold = 0;
+  static int hold_cnt = 0;
+  
+  static uint8_t do_force_after_hold = 0;
+  
+  // ====== 튜닝 파라미터 ======
+  const float L_traj = 1.0f;      // 각 변의 길이 [m]
+  const float dt_ref = 0.05f;   
+  
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    trajectory_state = 0;
+    corner_hold = 0;
+    hold_cnt = 0;
+    do_force_after_hold = 0;
+    s_ref = 0.0f;
+    return;
+  }
+  
+  // ====== 코너 홀드 구간 ======
+  if (corner_hold)
+  {
+    SoftStop_All();
+    
+    if (++hold_cnt >= CORNER_HOLD_N)
+    {
+      corner_hold = 0;
+      hold_cnt = 0;
+      s_ref = 0.0f;   // 다음 변 시작 전에 ref 진행거리 초기화
+      
+      if (do_force_after_hold)
+      {
+        ForceStop_All();
+        Brk = 1;
+        do_force_after_hold = 0;
+        return;
+      }
+    }
+    return;
+  }
+  
+  // ====== 지그재그 경로 (좌표계: +X = 왼쪽, +Y = 위쪽) ======
+  // state 0: 1번째 변 -> 코드상 (+X, +Y) 설정  => 실제 동작: 왼쪽 위(좌상향) 출발
+  // state 1: 2번째 변 -> 코드상 (-X, +Y) 설정  => 실제 동작: 오른쪽 위(우상향)
+  // state 2: 3번째 변 -> 코드상 (+X, +Y) 설정  => 실제 동작: 왼쪽 위(좌상향)
+  // state 3: 4번째 변 -> 코드상 (-X, +Y) 설정  => 실제 동작: 오른쪽 위(우상향)
+  // state 4: 5번째 변 -> 코드상 (+X, +Y) 설정  => 실제 동작: 왼쪽 위(좌상향)
+  // state 5: 6번째 변 -> 코드상 (-X, +Y) 설정  => 실제 동작: 오른쪽 위(우상향) -> 도달 (총 전진 3m)
+  
+  switch (trajectory_state)
+  {
+  case 0: // 1번째 변: 코드상 +X (실제 왼쪽 위 출발)
+  case 2: // 3번째 변
+  case 4: // 5번째 변
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state++;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = +0.8660254f * v;   // +X 방향 = 실제 공간상 왼쪽(+sin 60°)
+    vy_world = +0.5f * v;         // +Y 방향 = 실제 공간상 위쪽(+cos 60°)
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 1: // 2번째 변: 코드상 -X (실제 오른쪽 위)
+  case 3: // 4번째 변
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state++;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = -0.8660254f * v;   // -X 방향 = 실제 공간상 오른쪽(-sin 60°)
+    vy_world = +0.5f * v;         // +Y 방향 = 실제 공간상 위쪽(+cos 60°)
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+
+  case 5: // 6번째 변: 코드상 -X (실제 오른쪽 위 - 마지막 변)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1;    // 3m 이동 완료 후 정지
+      trajectory_state = 0;
+      SoftStop_All();
+      return;
+    }
+    
+    v = v_traj;
+    vx_world = -0.8660254f * v;   // -X 방향 = 실제 공간상 오른쪽(-sin 60°)
+    vy_world = +0.5f * v;         // +Y 방향 = 실제 공간상 위쪽(+cos 60°)
+    
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  default:
+    trajectory_state = 0;
+    s_ref = 0.0f;
+    break;
+  }
+  
+  // ====== world -> body 변환 (yaw 기준) ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+
+void Trajectory_star_function(void)
+{
+  static int trajectory_state = 0;
+  
+  static uint8_t corner_hold = 0;
+  static int hold_cnt = 0;
+  
+  static uint8_t do_force_after_hold = 0;
+  
+  // ====== 튜닝 파라미터 ======
+  const float L_traj = 1.5f;      // 별의 한 변 길이 [m]
+  const float dt_ref = 0.05f;   
+  
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    trajectory_state = 0;
+    corner_hold = 0;
+    hold_cnt = 0;
+    do_force_after_hold = 0;
+    s_ref = 0.0f;
+    return;
+  }
+  
+  // ====== 코너 홀드 구간 ======
+  if (corner_hold)
+  {
+    SoftStop_All();
+    
+    if (++hold_cnt >= CORNER_HOLD_N)
+    {
+      corner_hold = 0;
+      hold_cnt = 0;
+      s_ref = 0.0f;   // 다음 변 시작 전에 ref 진행거리 초기화
+      
+      if (do_force_after_hold)
+      {
+        ForceStop_All();
+        Brk = 1;
+        do_force_after_hold = 0;
+        return;
+      }
+    }
+    return;
+  }
+  
+  // ====== 정확한 오각별 경로 (로봇 좌표계: +X = 왼쪽, +Y = 위쪽) ======
+  // 빨간점 시작 -> 좌상단 -> 우중단 -> 좌중단 -> 우상단 -> 하단 원점
+  
+  switch (trajectory_state)
+  {
+  case 0: // 1번째: 하단 -> 좌측 상단 (급격한 좌상향)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 1;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = +0.3090170f * v;   // +sin(18°) : 약간 왼쪽(+X)
+    vy_world = +0.9510565f * v;   // +cos(18°) : 크게 위로(+Y)
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 1: // 2번째: 좌상단 -> 우측 중단 (우하향)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 2;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = -0.8090170f * v;   // -cos(36°) : 크게 오른쪽(-X)
+    vy_world = -0.5877853f * v;   // -sin(36°) : 아래로(-Y)
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+
+  case 2: // 3번째: 우중단 -> 좌측 중단 (수평 좌측)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 3;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = +1.0f * v;         // 수평 이동 : 왼쪽(+X)만 진행
+    vy_world = 0.0f;
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+
+  case 3: // 4번째: 좌중단 -> 우측 상단 (우상향)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 4;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = -0.8090170f * v;   // -cos(36°) : 크게 오른쪽(-X)
+    vy_world = +0.5877853f * v;   // +sin(36°) : 위로(+Y)
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+
+  case 4: // 5번째: 우상단 -> 하단 빨간점 (급격한 좌하향하여 원점 복귀)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      do_force_after_hold = 1;    // 완주 후 정지
+      trajectory_state = 0;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = +0.3090170f * v;   // +sin(18°) : 약간 왼쪽(+X)
+    vy_world = -0.9510565f * v;   // -cos(18°) : 크게 아래로(-Y)
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  default:
+    trajectory_state = 0;
+    s_ref = 0.0f;
+    break;
+  }
+  
+  // ====== world -> body 변환 (yaw 기준) ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+void Trajectory_maca_square_function(void)
+{
+  static int trajectory_state = 0;
+  static uint8_t corner_hold = 0;
+  static int hold_cnt = 0;
+  static uint8_t do_force_after_hold = 0;
+  
+  const float L_traj = 1.5f;   // 사각형 한 변 길이 [m]
+  const float dt_ref = 0.05f;
+  
+  // 브레이크 비상 정지 상태 확인
+  if (Brk == 1)
+  {
+    ForceStop_All();
+    vel_x_model = 0.0f;
+    vel_y_model = 0.0f;
+    trajectory_state = 0;
+    corner_hold = 0;
+    hold_cnt = 0;
+    do_force_after_hold = 0;
+    s_ref = 0.0f;
+    return;
+  }
+  
+  // ====== 코너 대기(Hold) 구간 ======
+  if (corner_hold)
+  {
+    SoftStop_All();
+    
+    if (++hold_cnt >= CORNER_HOLD_N)
+    {
+      corner_hold = 0;
+      hold_cnt = 0;
+      s_ref = 0.0f;
+      
+      if (do_force_after_hold)
+      {
+        ForceStop_All();
+        Brk = 1; // 최종 보정 주행까지 모두 완료된 후 모터 정지 (Brk = 1)
+        do_force_after_hold = 0;
+        return;
+      }
+    }
+    return;
+  }
+  
+  // ====== 시퀀스 상태 머신 ======
+  switch (trajectory_state)
+  {
+  // --- 1단계: 네모(사각형) 주행 ---
+  case 0: // +Y 방향 이동
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 1;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = 0.0f;
+    vy_world = +v;
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 1: // +X 방향 이동
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 2;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = +v;
+    vy_world = 0.0f;
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 2: // -Y 방향 이동
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 3;
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = 0.0f;
+    vy_world = -v;
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  case 3: // -X 방향 이동 (네모 주행 완료)
+    if (s_ref >= L_traj)
+    {
+      corner_hold = 1;
+      hold_cnt = 0;
+      trajectory_state = 4; // 네모 완주 후 Jetson 보정량 대기 단계로 전이
+      SoftStop_All();
+      return;
+    }
+    v = v_traj;
+    vx_world = -v;
+    vy_world = 0.0f;
+    s_ref += fabsf(v) * dt_ref / 14.0f;
+    break;
+    
+  // --- 2단계: 네모 완주 후 정지 상태에서 Jetson cVAE/Kinematics 보정 오프셋 수신 대기 ---
+  case 4:
+    SoftStop_All(); // Brk=0인 상태로 정지하여 속도를 0으로 유지 (Jetson이 1.5초 정지를 감지)
+    
+    // Jetson으로부터 유효한 보정 오프셋(Manipulator_Target_X, Y)이 수신되면 보정 주행 단계(State 5)로 진입
+    if (fabsf(Manipulator_Target_X) > 0.0001f || fabsf(Manipulator_Target_Y) > 0.0001f)
+    {
+      s_ref = 0.0f;
+      trajectory_state = 5;
+    }
+    return;
+  // --- 3단계: cVAE/Kinematics 보정량(Manipulator_Target_X, Y)만큼 target 속도(v_traj)로 추가 이동 ---
+  case 5:
+    {
+      float dx_comp = Manipulator_Target_X;
+      float dy_comp = Manipulator_Target_Y;
+      float comp_dist = sqrtf(dx_comp * dx_comp + dy_comp * dy_comp);
+      
+      // 보정 이동 완료 확인
+      if (comp_dist <= 0.001f || s_ref >= comp_dist)
+      {
+        corner_hold = 1;
+        hold_cnt = 0;
+        do_force_after_hold = 1; // 보정 주행까지 완벽히 끝났으므로 최종 정지 (Brk = 1)
+        trajectory_state = 0;
+        SoftStop_All();
+        return;
+      }
+      
+      // 보정 오프셋 방향 단위 벡터 계산 및 world 속도 생성
+      v = v_traj;
+      vx_world = v * (dx_comp / comp_dist);
+      vy_world = v * (dy_comp / comp_dist);
+      s_ref += fabsf(v) * dt_ref / 14.0f;
+    }
+    break;
+  default:
+    trajectory_state = 0;
+    s_ref = 0.0f;
+    break;
+  }
+  
+  // ====== world -> body 변환 (yaw 기준) ======
+  W_b = 0.0f;
+  float current_yaw_rad = yaw * (pi / 180.0f);
+  
+  Vx_traj_b =  vx_world * cosf(current_yaw_rad) + vy_world * sinf(current_yaw_rad);
+  Vy_traj_b = -vx_world * sinf(current_yaw_rad) + vy_world * cosf(current_yaw_rad);
+}
+
+
+
+
+
+
+typedef struct {
+  float b0, b1, b2;
+  float a1, a2;      // denominator: 1 + a1 z^-1 + a2 z^-2
+  float x1, x2;      // x[n-1], x[n-2]
+  float y1, y2;      // y[n-1], y[n-2]
+} Biquad2_t;
+
+static inline void Biquad_Reset(Biquad2_t *f)
+{
+  f->x1 = f->x2 = 0.0f;
+  f->y1 = f->y2 = 0.0f;
+}
+
+static inline float Biquad_Step(Biquad2_t *f, float x)
+{
+  float y = f->b0*x + f->b1*f->x1 + f->b2*f->x2
+    - f->a1*f->y1 - f->a2*f->y2;
+  
+  f->x2 = f->x1;  f->x1 = x;
+  f->y2 = f->y1;  f->y1 = y;
+  return y;
+}
+
+// Tustin(bilinear) : continuous (b2 s^2 + b1 s + b0)/(a2 s^2 + a1 s + a0) -> biquad
+static inline void Biquad_FromContinuous_Tustin(
+                                                Biquad2_t *f,
+                                                float b2, float b1, float b0,
+                                                float a2, float a1, float a0,
+                                                float T)
+{
+  // Numerator (q=z^-1) : N2 q^2 + N1 q + N0
+  float N2 = (T*T)*b0 - 2.0f*T*b1 + 4.0f*b2;
+  float N1 = 2.0f*(T*T)*b0 - 8.0f*b2;
+  float N0 = (T*T)*b0 + 2.0f*T*b1 + 4.0f*b2;
+  
+  // Denominator (q=z^-1) : D2 q^2 + D1 q + D0
+  float D2 = (T*T)*a0 - 2.0f*T*a1 + 4.0f*a2;
+  float D1 = 2.0f*(T*T)*a0 - 8.0f*a2;
+  float D0 = (T*T)*a0 + 2.0f*T*a1 + 4.0f*a2;
+  
+  // normalize by D0 -> (B0 + B1 q + B2 q^2)/(1 + A1 q + A2 q^2)
+  float invD0 = 1.0f / D0;
+  
+  f->b0 = N0 * invD0;
+  f->b1 = N1 * invD0;
+  f->b2 = N2 * invD0;
+  
+  f->a1 = D1 * invD0;
+  f->a2 = D2 * invD0;
+  
+  Biquad_Reset(f);
+}
+
+
+void Make_Q_2nd(Biquad2_t *Q, float wc, float zc, float T)
+{
+  float b2 = 0.0f, b1 = 0.0f, b0 = wc*wc;
+  float a2 = 1.0f, a1 = 2.0f*zc*wc, a0 = wc*wc;
+  
+  Biquad_FromContinuous_Tustin(Q, b2,b1,b0, a2,a1,a0, T);
+}
+
+
+void Make_F_2nd(Biquad2_t *F, float wc, float zc, float wn, float zn, float T)
+{
+  float k = (wc*wc) / (wn*wn);
+  
+  float b2 = k;
+  float b1 = k * 2.0f*zn*wn;
+  float b0 = wc*wc;
+  
+  float a2 = 1.0f;
+  float a1 = 2.0f*zc*wc;
+  float a0 = wc*wc;
+  
+  Biquad_FromContinuous_Tustin(F, b2,b1,b0, a2,a1,a0, T);
+}
+
+Biquad2_t Qx, Qy;
+Biquad2_t Fx, Fy;
+
+
+void Mecanum_wheel_body_DOB()
+{
+  float qx = Biquad_Step(&Qx, pre_Vx_b);
+  float fx = Biquad_Step(&Fx, vel_x_cf);
+  d_hat_x = -qx + fx*14.0;
+  Vx_b = Vx_traj_b - kdob * d_hat_x;
+  
+  float qy = Biquad_Step(&Qy, pre_Vy_b);
+  float fy = Biquad_Step(&Fy, vel_y_cf);
+  d_hat_y = -qy + fy*14.0;
+  Vy_b = Vy_traj_b - kdob * d_hat_y;
+  
+  Vx_b_veiw = Vx_b/14.0;
+  Vy_b_veiw = Vy_b/14.0;
+  d_hat_x_veiw = d_hat_x/14.0;
+  d_hat_y_veiw = d_hat_y/14.0;
+  
+  pre_Vx_b = Vx_b; 
+  pre_Vy_b = Vy_b;
+}
+
+static inline float sgn_dead(float v, float eps)
+{
+  if (v >  eps) return  1.0f;
+  if (v < -eps) return -1.0f;
+  return 0.0f;
+}
+
+void lumped_disturbance()
+{
+  vel_ref_x = Vx_traj_b / 14.0f;
+  vel_ref_y = Vy_traj_b / 14.0f;
+  
+  dis_F1 = Current_ma1 * dir1;
+  dis_F2 = Current_ma2 * dir2;
+  dis_F3 = Current_ma3 * dir3;
+  dis_F4 = Current_ma4 * dir4;
+  
+  dis_x_exp = vel_ref_x - vel_x_cf;
+  dis_y_exp = vel_ref_y - vel_y_cf;
+  
+  Current_sum_x = 0.707f * (-dis_F1 +dis_F2 + dis_F3 - dis_F4);
+  Current_sum_y = 0.707f * (dis_F1 +dis_F2 + dis_F3 + dis_F4);
+  
+  float Ieff_x = Current_sum_x;
+  float Ieff_y = Current_sum_y;
+  
+  sgnx = sgn_dead(vel_x_model, 0.02f); 
+  sgny = sgn_dead(vel_y_model, 0.02f);
+  
+  resist_x = (dis_mu_x * dis_m * dis_g) * sgnx + (dis_c_x * vel_x_model);
+  resist_y = (dis_mu_y * dis_m * dis_g) * sgny + (dis_c_y * vel_y_model);
+  
+  
+  if (fabsf(Ieff_x) < 0.2f) Ieff_x = 0.0f;
+  if (fabsf(Ieff_y) < 0.2f) Ieff_y = 0.0f;
+  
+  F_net = 0.7149f * dis_K * Ieff_y - ((dis_mu_y * dis_m * dis_g) * sgny + dis_c_y * vel_y_model);
+  
+  vel_x_model += dis_Ts * (0.6227f * dis_K * Ieff_x - resist_x)/dis_m ;
+  vel_y_model += dis_Ts * (0.7149f * dis_K * Ieff_y - resist_y)/dis_m;
+  
+  dis_x_for = vel_ref_x - vel_x_model;
+  dis_y_for = vel_ref_y - vel_y_model;
+  
+  
+  vel_x_cf_dot = (vel_x_cf - pre_vel_x_cf)/dis_Ts;
+  vel_y_cf_dot = (vel_y_cf - pre_vel_y_cf)/dis_Ts;
+  
+  
+  dis_x_alpha = (dis_m * vel_x_cf_dot + dis_mu_x * dis_m * dis_g + dis_c_x * vel_x_cf)/(dis_K*Current_sum_x);
+  dis_y_alpha = (dis_m * vel_y_cf_dot + dis_mu_y * dis_m * dis_g + dis_c_y * vel_y_cf)/(dis_K*Current_sum_y);
+  
+  pre_vel_x_cf = vel_x_cf;
+  pre_vel_y_cf = vel_y_cf;
+}
+
+
+void Brk_reset()
+{
+  if (Brk == 1){ 
+    Vel_Error1 = 0; Vel_Error2 = 0; Vel_Error3 = 0; Vel_Error4 = 0;
+    Vel_Error_Sum1 = 0; Vel_Error_Sum2 = 0; Vel_Error_Sum3 = 0; Vel_Error_Sum4 = 0;
+    Vel_Control1 = 0; Vel_Control2 = 0; Vel_Control3 = 0; Vel_Control4 = 0;
+    Current_Error1 = 0; Current_Error2 = 0; Current_Error3 = 0; Current_Error4 = 0;
+    Current_Error_Sum1 = 0; Current_Error_Sum2 = 0; Current_Error_Sum3 = 0; Current_Error_Sum4 = 0;
+    Current_Control1 = 0; Current_Control2 = 0; Current_Control3 = 0; Current_Control4 = 0;
+    Vx_b = 0.0f; Vy_b = 0.0f; W_b = 0.0f; theta_traj = 0.0f;
+    pre_Vx_b = 0.0; pre_Vy_b = 0.0; d_hat_x = 0.0; d_hat_y = 0.0;
+    
+    Biquad_Reset(&Qx); Biquad_Reset(&Qy);
+    Biquad_Reset(&Fx); Biquad_Reset(&Fy);
+  }
+}
+
+
+void jetson_orin_tx(void)
+{
+  // 1. 타임스탬프 누적
+  Timestamp += 0.05f;
+  
+  jetsonPacket.header = 0xAA;
+  jetsonPacket.pos_x = pos_x;
+  jetsonPacket.pos_y = pos_y;
+  jetsonPacket.Sx_ref = Sx_ref; // 변수명 확인 필요 (Sx_ref)
+  jetsonPacket.Sy_ref = Sy_ref;
+  jetsonPacket.yaw = yaw;
+  jetsonPacket.yaw_ref = yaw_ref;
+  jetsonPacket.Vx_target = Vx_target;
+  jetsonPacket.Vy_target = Vy_target;
+  jetsonPacket.timestamp = Timestamp;
+  
+  // 3. 체크섬 계산 (선택사항이지만 데이터 무결성을 위해 추천)
+  uint8_t csum = 0;
+  uint8_t *ptr = (uint8_t*)&jetsonPacket;
+  for(int i = 0; i < sizeof(JetsonTxPacket) - 1; i++) {
+    csum += ptr[i];
+  }
+  jetsonPacket.checksum = csum;
+  
+  // 4. 안전하게 DMA로 송신 (구조체의 주소값을 바로 넘김)
+  // 이전 송신이 완료되었는지 확인 후 송신하는 것이 안전합니다.
+  if(huart5.gState == HAL_UART_STATE_READY)
+  {
+    HAL_UART_Transmit_DMA(&huart5, (uint8_t*)&jetsonPacket, sizeof(JetsonTxPacket));
+  }
+}
+
+
+void jetson_orin_rx(void)
+{
+  // 1. ORE(Overrun Error) 및 에러 플래그 해제 (수신 멈춤 방지)
+  if (__HAL_UART_GET_FLAG(&huart5, UART_FLAG_ORE))
+  {
+    __HAL_UART_CLEAR_OREFLAG(&huart5);
+  }
+  
+  // 2. DMA 수신 버퍼 갱신 시작 (Circular 모드인 경우 HAL_BUSY를 리턴하므로 안전함)
+  HAL_UART_Receive_DMA(&huart5, jetson_rx_buffer, JETSON_RX_BUF_SIZE);
+  
+  // 3. 버퍼 전체를 돌며 스타트 바이트 0xFD가 매칭되는 지점 탐색 및 검증
+  for(int i = 0; i < JETSON_RX_BUF_SIZE; i++)
+  {
+    if(jetson_rx_buffer[i] == 0xFD)
+    {
+      // 19바이트 크기의 임시 버퍼에 링 버퍼 형식으로 복사 (끝부분 경계 고려)
+      uint8_t temp_buf[19];
+      for(int j = 0; j < 19; j++)
+      {
+        temp_buf[j] = jetson_rx_buffer[(i + j) % JETSON_RX_BUF_SIZE];
+      }
+      
+      // 4. 엔드 바이트가 0xFE인지 검증
+      if(temp_buf[18] == 0xFE)
+      {
+        // 5. 체크섬 계산 (0~16번 인덱스 합산)
+        uint8_t calc_checksum = 0;
+        for (int k = 0; k < 17; k++)
+        {
+          calc_checksum += temp_buf[k];
+        }
+        
+        // 6. 체크섬이 완벽히 일치할 때만 데이터 수용
+        if (calc_checksum == temp_buf[17])
+        {
+          memcpy(&logic_packet, temp_buf, sizeof(JetsonPacket));
+          
+          Manipulator_Target_X = logic_packet.corrected_x;
+          Manipulator_Target_Y = logic_packet.corrected_y;
+          Manipulator_Camera_X = logic_packet.camera_x;
+          Manipulator_Camera_Y = logic_packet.camera_y;
+          
+          rx_ready_flag = 1;
+          break; // 올바른 패킷을 찾았으므로 더 이상의 루프는 돌지 않고 탈출
+        }
+      }
+    }
+  }
+}
+
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  static uint32_t temp;
+  if(GPIO_Pin == GPIO_PIN_13)
+  {
+    if((HAL_GetTick()-temp)>100)
+    {
+      button ++;
+    }
+  }
+  temp = HAL_GetTick();
+}
+
+/* USER CODE END 0 */
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+int main(void)
+{
+  /* USER CODE BEGIN 1 */
+  
+  /* USER CODE END 1 */
+
+  /* MCU Configuration--------------------------------------------------------*/
+
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+  HAL_Init();
+
+  /* USER CODE BEGIN Init */
+  
+  /* USER CODE END Init */
+
+  /* Configure the system clock */
+  SystemClock_Config();
+
+  /* USER CODE BEGIN SysInit */
+  
+  /* USER CODE END SysInit */
+
+  /* Initialize all configured peripherals */
+  MX_GPIO_Init();
+  MX_DMA_Init();
+  MX_USART2_UART_Init();
+  MX_ADC1_Init();
+  MX_TIM3_Init();
+  MX_TIM1_Init();
+  MX_TIM2_Init();
+  MX_TIM5_Init();
+  MX_TIM8_Init();
+  MX_UART4_Init();
+  MX_UART5_Init();
+  MX_USART1_UART_Init();
+  MX_USART3_UART_Init();
+  /* USER CODE BEGIN 2 */
+  HAL_TIM_Base_Start_IT(&htim3);
+  
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_1);
+  HAL_TIMEx_PWMN_Start(&htim3, TIM_CHANNEL_1);
+  
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_2);
+  HAL_TIMEx_PWMN_Start(&htim3, TIM_CHANNEL_2);
+  
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
+  HAL_TIMEx_PWMN_Start(&htim3, TIM_CHANNEL_3);
+  
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+  HAL_TIMEx_PWMN_Start(&htim3, TIM_CHANNEL_4);
+  
+  HAL_TIM_Encoder_Start(&htim1, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim2, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim5, TIM_CHANNEL_ALL);
+  HAL_TIM_Encoder_Start(&htim8, TIM_CHANNEL_ALL);
+  
+  wc_x = 2.0f * pi * fc_x;
+  wc_y = 2.0f * pi * fc_y;
+  
+  Make_Q_2nd(&Qx, wc_x, zc_x, T_DOB);
+  Make_Q_2nd(&Qy, wc_y, zc_y, T_DOB);
+  
+  Make_F_2nd(&Fx, wc_x, zc_x, wn_x, zn_x, T_DOB);
+  Make_F_2nd(&Fy, wc_y, zc_y, wn_y, zn_y, T_DOB);
+  
+  /* (선택) d_hat, pre 상태도 초기화 */
+  Biquad_Reset(&Qx); Biquad_Reset(&Qy);
+  Biquad_Reset(&Fx); Biquad_Reset(&Fy);
+  
+  yaw_offset = yaw_raw_deg;
+  
+  HAL_UART_Receive_DMA(&huart5, jetson_rx_buffer, JETSON_RX_BUF_SIZE);
+  /* USER CODE END 2 */
+
+  /* Infinite loop */
+  /* USER CODE BEGIN WHILE */
+  while (1)
+  {
+    if(Brk == 0)
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_RESET);
+    else if(Brk == 1)
+      HAL_GPIO_WritePin(GPIOC, GPIO_PIN_9, GPIO_PIN_SET);
+    
+    /* USER CODE END WHILE */
+
+    /* USER CODE BEGIN 3 */
+  }
+  /* USER CODE END 3 */
+}
+
+/**
+  * @brief System Clock Configuration
+  * @retval None
+  */
+void SystemClock_Config(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+
+  /** Configure the main internal regulator output voltage
+  */
+  __HAL_RCC_PWR_CLK_ENABLE();
+  __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE3);
+
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
+  */
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLN = 336;
+  RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV4;
+  RCC_OscInitStruct.PLL.PLLQ = 2;
+  RCC_OscInitStruct.PLL.PLLR = 2;
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Initializes the CPU, AHB and APB buses clocks
+  */
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
+                              |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV2;
+  RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV1;
+
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+}
+
+/**
+  * @brief ADC1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_ADC1_Init(void)
+{
+
+  /* USER CODE BEGIN ADC1_Init 0 */
+  
+  /* USER CODE END ADC1_Init 0 */
+
+  ADC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN ADC1_Init 1 */
+  
+  /* USER CODE END ADC1_Init 1 */
+
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
+  */
+  hadc1.Instance = ADC1;
+  hadc1.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
+  hadc1.Init.Resolution = ADC_RESOLUTION_10B;
+  hadc1.Init.ScanConvMode = ENABLE;
+  hadc1.Init.ContinuousConvMode = DISABLE;
+  hadc1.Init.DiscontinuousConvMode = DISABLE;
+  hadc1.Init.ExternalTrigConvEdge = ADC_EXTERNALTRIGCONVEDGE_NONE;
+  hadc1.Init.ExternalTrigConv = ADC_SOFTWARE_START;
+  hadc1.Init.DataAlign = ADC_DATAALIGN_RIGHT;
+  hadc1.Init.NbrOfConversion = 4;
+  hadc1.Init.DMAContinuousRequests = ENABLE;
+  hadc1.Init.EOCSelection = ADC_EOC_SINGLE_CONV;
+  if (HAL_ADC_Init(&hadc1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_4;
+  sConfig.Rank = 1;
+  sConfig.SamplingTime = ADC_SAMPLETIME_15CYCLES;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_6;
+  sConfig.Rank = 2;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_7;
+  sConfig.Rank = 3;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
+  */
+  sConfig.Channel = ADC_CHANNEL_8;
+  sConfig.Rank = 4;
+  if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN ADC1_Init 2 */
+  
+  /* USER CODE END ADC1_Init 2 */
+
+}
+
+/**
+  * @brief TIM1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM1_Init(void)
+{
+
+  /* USER CODE BEGIN TIM1_Init 0 */
+  
+  /* USER CODE END TIM1_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM1_Init 1 */
+  
+  /* USER CODE END TIM1_Init 1 */
+  htim1.Instance = TIM1;
+  htim1.Init.Prescaler = 0;
+  htim1.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim1.Init.Period = 65000;
+  htim1.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim1.Init.RepetitionCounter = 0;
+  htim1.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 10;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 10;
+  if (HAL_TIM_Encoder_Init(&htim1, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM1_Init 2 */
+  
+  /* USER CODE END TIM1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+  
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+  
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 65000;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 10;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 10;
+  if (HAL_TIM_Encoder_Init(&htim2, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+  
+  /* USER CODE END TIM2_Init 2 */
+
+}
+
+/**
+  * @brief TIM3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM3_Init(void)
+{
+
+  /* USER CODE BEGIN TIM3_Init 0 */
+  
+  /* USER CODE END TIM3_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM3_Init 1 */
+  
+  /* USER CODE END TIM3_Init 1 */
+  htim3.Instance = TIM3;
+  htim3.Init.Prescaler = 0;
+  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim3.Init.Period = 4199;
+  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim3, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_ConfigChannel(&htim3, &sConfigOC, TIM_CHANNEL_4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM3_Init 2 */
+  
+  /* USER CODE END TIM3_Init 2 */
+  HAL_TIM_MspPostInit(&htim3);
+
+}
+
+/**
+  * @brief TIM5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM5_Init(void)
+{
+
+  /* USER CODE BEGIN TIM5_Init 0 */
+  
+  /* USER CODE END TIM5_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM5_Init 1 */
+  
+  /* USER CODE END TIM5_Init 1 */
+  htim5.Instance = TIM5;
+  htim5.Init.Prescaler = 0;
+  htim5.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim5.Init.Period = 65000;
+  htim5.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim5.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 10;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 10;
+  if (HAL_TIM_Encoder_Init(&htim5, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim5, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM5_Init 2 */
+  
+  /* USER CODE END TIM5_Init 2 */
+
+}
+
+/**
+  * @brief TIM8 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM8_Init(void)
+{
+
+  /* USER CODE BEGIN TIM8_Init 0 */
+  
+  /* USER CODE END TIM8_Init 0 */
+
+  TIM_Encoder_InitTypeDef sConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM8_Init 1 */
+  
+  /* USER CODE END TIM8_Init 1 */
+  htim8.Instance = TIM8;
+  htim8.Init.Prescaler = 0;
+  htim8.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim8.Init.Period = 65000;
+  htim8.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim8.Init.RepetitionCounter = 0;
+  htim8.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  sConfig.EncoderMode = TIM_ENCODERMODE_TI12;
+  sConfig.IC1Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC1Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC1Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC1Filter = 10;
+  sConfig.IC2Polarity = TIM_ICPOLARITY_RISING;
+  sConfig.IC2Selection = TIM_ICSELECTION_DIRECTTI;
+  sConfig.IC2Prescaler = TIM_ICPSC_DIV1;
+  sConfig.IC2Filter = 10;
+  if (HAL_TIM_Encoder_Init(&htim8, &sConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim8, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM8_Init 2 */
+  
+  /* USER CODE END TIM8_Init 2 */
+
+}
+
+/**
+  * @brief UART4 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART4_Init(void)
+{
+
+  /* USER CODE BEGIN UART4_Init 0 */
+  
+  /* USER CODE END UART4_Init 0 */
+
+  /* USER CODE BEGIN UART4_Init 1 */
+  
+  /* USER CODE END UART4_Init 1 */
+  huart4.Instance = UART4;
+  huart4.Init.BaudRate = 115200;
+  huart4.Init.WordLength = UART_WORDLENGTH_8B;
+  huart4.Init.StopBits = UART_STOPBITS_1;
+  huart4.Init.Parity = UART_PARITY_NONE;
+  huart4.Init.Mode = UART_MODE_TX_RX;
+  huart4.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart4.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart4) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART4_Init 2 */
+  
+  /* USER CODE END UART4_Init 2 */
+
+}
+
+/**
+  * @brief UART5 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_UART5_Init(void)
+{
+
+  /* USER CODE BEGIN UART5_Init 0 */
+  
+  /* USER CODE END UART5_Init 0 */
+
+  /* USER CODE BEGIN UART5_Init 1 */
+  
+  /* USER CODE END UART5_Init 1 */
+  huart5.Instance = UART5;
+  huart5.Init.BaudRate = 115200;
+  huart5.Init.WordLength = UART_WORDLENGTH_8B;
+  huart5.Init.StopBits = UART_STOPBITS_1;
+  huart5.Init.Parity = UART_PARITY_NONE;
+  huart5.Init.Mode = UART_MODE_TX_RX;
+  huart5.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart5.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart5) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN UART5_Init 2 */
+  
+  /* USER CODE END UART5_Init 2 */
+
+}
+
+/**
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART1_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART1_Init 0 */
+  
+  /* USER CODE END USART1_Init 0 */
+
+  /* USER CODE BEGIN USART1_Init 1 */
+  
+  /* USER CODE END USART1_Init 1 */
+  huart1.Instance = USART1;
+  huart1.Init.BaudRate = 115200;
+  huart1.Init.WordLength = UART_WORDLENGTH_8B;
+  huart1.Init.StopBits = UART_STOPBITS_1;
+  huart1.Init.Parity = UART_PARITY_NONE;
+  huart1.Init.Mode = UART_MODE_TX_RX;
+  huart1.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart1.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART1_Init 2 */
+  
+  /* USER CODE END USART1_Init 2 */
+
+}
+
+/**
+  * @brief USART2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART2_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART2_Init 0 */
+  
+  /* USER CODE END USART2_Init 0 */
+
+  /* USER CODE BEGIN USART2_Init 1 */
+  
+  /* USER CODE END USART2_Init 1 */
+  huart2.Instance = USART2;
+  huart2.Init.BaudRate = 115200;
+  huart2.Init.WordLength = UART_WORDLENGTH_8B;
+  huart2.Init.StopBits = UART_STOPBITS_1;
+  huart2.Init.Parity = UART_PARITY_NONE;
+  huart2.Init.Mode = UART_MODE_TX_RX;
+  huart2.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart2.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART2_Init 2 */
+  
+  /* USER CODE END USART2_Init 2 */
+
+}
+
+/**
+  * @brief USART3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_USART3_UART_Init(void)
+{
+
+  /* USER CODE BEGIN USART3_Init 0 */
+  
+  /* USER CODE END USART3_Init 0 */
+
+  /* USER CODE BEGIN USART3_Init 1 */
+  
+  /* USER CODE END USART3_Init 1 */
+  huart3.Instance = USART3;
+  huart3.Init.BaudRate = 115200;
+  huart3.Init.WordLength = UART_WORDLENGTH_8B;
+  huart3.Init.StopBits = UART_STOPBITS_1;
+  huart3.Init.Parity = UART_PARITY_NONE;
+  huart3.Init.Mode = UART_MODE_TX_RX;
+  huart3.Init.HwFlowCtl = UART_HWCONTROL_NONE;
+  huart3.Init.OverSampling = UART_OVERSAMPLING_16;
+  if (HAL_UART_Init(&huart3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN USART3_Init 2 */
+  
+  /* USER CODE END USART3_Init 2 */
+
+}
+
+/**
+  * Enable DMA controller clock
+  */
+static void MX_DMA_Init(void)
+{
+
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA2_CLK_ENABLE();
+  __HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* DMA interrupt init */
+  /* DMA1_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  /* DMA1_Stream1_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+  /* DMA1_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream2_IRQn);
+  /* DMA1_Stream3_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream3_IRQn);
+  /* DMA1_Stream4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
+  /* DMA1_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream7_IRQn);
+  /* DMA2_Stream0_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream0_IRQn);
+  /* DMA2_Stream2_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream2_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream2_IRQn);
+  /* DMA2_Stream7_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA2_Stream7_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA2_Stream7_IRQn);
+
+}
+
+/**
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_GPIO_Init(void)
+{
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+  /* GPIO Ports Clock Enable */
+  __HAL_RCC_GPIOC_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOA, LD2_Pin|Motor1_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, Motor2_Pin|Motor3_Pin|Motor4_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(Brk_GPIO_Port, Brk_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin : B1_Pin */
+  GPIO_InitStruct.Pin = B1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(B1_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : LD2_Pin Motor1_Pin */
+  GPIO_InitStruct.Pin = LD2_Pin|Motor1_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+
+  /*Configure GPIO pins : Motor2_Pin Motor3_Pin Motor4_Pin */
+  GPIO_InitStruct.Pin = Motor2_Pin|Motor3_Pin|Motor4_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : Brk_Pin */
+  GPIO_InitStruct.Pin = Brk_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(Brk_GPIO_Port, &GPIO_InitStruct);
+
+  /* EXTI interrupt init*/
+  HAL_NVIC_SetPriority(EXTI15_10_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(EXTI15_10_IRQn);
+
+}
+
+/* USER CODE BEGIN 4 */
+
+/* USER CODE END 4 */
+
+/**
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
+  */
+void Error_Handler(void)
+{
+  /* USER CODE BEGIN Error_Handler_Debug */
+  /* User can add his own implementation to report the HAL error return state */
+  __disable_irq();
+  while (1)
+  {
+  }
+  /* USER CODE END Error_Handler_Debug */
+}
+
+#ifdef  USE_FULL_ASSERT
+/**
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
+  */
+void assert_failed(uint8_t *file, uint32_t line)
+{
+  /* USER CODE BEGIN 6 */
+  /* User can add his own implementation to report the file name and line number,
+  ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  /* USER CODE END 6 */
+}
+#endif /* USE_FULL_ASSERT */
