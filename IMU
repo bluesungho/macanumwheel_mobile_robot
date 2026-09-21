@@ -1,0 +1,63 @@
+void EBIMU9_DOFV5_function()
+{
+  HAL_UART_Receive_DMA(&huart1,gyro_buffer, GYRO_BUFFER_SIZE);
+  
+  for(int i = 0; i < GYRO_BUFFER_SIZE-1; i++)
+  {
+    if(gyro_buffer[i] == 0x55 && gyro_buffer[i+1] == 0x55)
+    {
+      
+      for(int j = 0 ; j < i ; j++)
+      {
+        gyro_bufferCpy[j+(22-i)] = gyro_buffer[j];
+      }
+      
+      for(int k = 0 ; k < 22 - i ; k++)
+      {
+        gyro_bufferCpy[k] = gyro_buffer[i+k];
+      }
+    }
+  }
+  
+  if(gyro_bufferCpy[0] == 0x55 && gyro_bufferCpy[1] == 0x55)
+    
+  {
+    Euler_Roll = (gyro_bufferCpy[2] << 8) | gyro_bufferCpy[3];
+    Euler_Pitch = (gyro_bufferCpy[4] << 8) | gyro_bufferCpy[5];
+    Euler_Yaw = (gyro_bufferCpy[6] << 8) | gyro_bufferCpy[7];
+    
+    
+    roll = Euler_Roll / 100.0;
+    pitch = Euler_Pitch / 100.0;
+    yaw_raw_deg = Euler_Yaw / 100.0;
+    
+    if (!yaw_offset_set) {
+      yaw_offset = yaw_raw_deg;
+      yaw_offset_set = 1;
+    }
+    yaw = yaw_raw_deg - yaw_offset;  
+    
+    Euler_Roll_V = (gyro_bufferCpy[8] << 8) | gyro_bufferCpy[9];
+    Euler_Pitch_V = (gyro_bufferCpy[10] << 8) | gyro_bufferCpy[11];
+    Euler_Yaw_V = (gyro_bufferCpy[12] << 8) | gyro_bufferCpy[13];
+    
+    roll_V = Euler_Roll_V/ 10.0;
+    pitch_V = Euler_Pitch_V / 10.0;
+    yaw_V = Euler_Yaw_V / 10.0;
+    
+    Euler_X_aixs_A = (gyro_bufferCpy[14] << 8 | gyro_bufferCpy[15]);
+    Euler_Y_aixs_A = (gyro_bufferCpy[16] << 8 | gyro_bufferCpy[17]);
+    Euler_Z_aixs_A = (gyro_bufferCpy[18] << 8 | gyro_bufferCpy[19]);
+    
+    X_aixs_A = Euler_X_aixs_A / 1000.0 * G;
+    Y_aixs_A = Euler_Y_aixs_A / 1000.0 * G;
+    Z_aixs_A = Euler_Z_aixs_A / 1000.0 * G;
+    
+    
+  }
+  else
+  {
+    //HAL_UART_Init(&huart2);
+    //flag = 2;
+  }
+}
